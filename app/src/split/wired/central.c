@@ -87,7 +87,7 @@ K_WORK_DEFINE(publish_events, publish_events_work);
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_WIRED_UART_MODE_ASYNC)
 
-uint8_t async_rx_buf[RX_BUFFER_SIZE / 2][2];
+uint8_t async_rx_buf[2][RX_BUFFER_SIZE / 2];
 
 static struct zmk_split_wired_async_state async_state = {
     .process_tx_work = &publish_events,
@@ -185,6 +185,8 @@ static ssize_t get_payload_data_size(const struct zmk_split_transport_central_co
         return sizeof(cmd->data.set_physical_layout);
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS:
         return sizeof(cmd->data.set_hid_indicators);
+    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_LAYERS:
+        return sizeof(cmd->data.set_rgb_layers);
     default:
         return -ENOTSUP;
     }

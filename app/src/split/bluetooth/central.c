@@ -33,6 +33,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/pointing/input_split.h>
 #include <zmk/hid_indicators_types.h>
 #include <zmk/physical_layouts.h>
+#include <zmk/events/split_peripheral_layer_changed.h>
 
 static int start_scanning(void);
 
@@ -60,6 +61,8 @@ struct peripheral_slot {
     uint16_t update_hid_indicators;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
     uint16_t selected_physical_layout_handle;
+    uint16_t update_layers_handle;
+
     uint8_t position_state[POSITION_STATE_DATA_LEN];
     uint8_t changed_positions[POSITION_STATE_DATA_LEN];
 };
@@ -122,7 +125,7 @@ void release_peripheral_input_subs(struct bt_conn *conn) {
     for (size_t i = 0; i < ARRAY_SIZE(peripheral_input_slots); i++) {
         if (peripheral_input_slots[i].conn == conn) {
             peripheral_input_slots[i].conn = NULL;
-            // memset(&peripheral_input_slots[i], 0, sizeof(struct peripheral_input_slot));
+            zmk_input_split_peripheral_disconnected(peripheral_input_slots[i].reg);
         }
     }
 }
@@ -219,6 +222,7 @@ int release_peripheral_slot(int index) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
     slot->update_hid_indicators = 0;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+    slot->update_layers_handle = 0;
 
     return 0;
 }
@@ -620,6 +624,10 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
             LOG_DBG("Found update HID indicators handle");
             slot->update_hid_indicators = bt_gatt_attr_value_handle(attr);
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+        } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
+                                BT_UUID_DECLARE_128(ZMK_SPLIT_BT_UPDATE_LAYERS_UUID))) {
+            LOG_DBG("Found update Layers handle");
+            slot->update_layers_handle = bt_gatt_attr_value_handle(attr);
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
         } else if (!bt_uuid_cmp(((struct bt_gatt_chrc *)attr->user_data)->uuid,
                                 BT_UUID_BAS_BATTERY_LEVEL)) {
@@ -706,6 +714,8 @@ static uint8_t split_central_chrc_discovery_func(struct bt_conn *conn,
         }
     }
 #endif // IS_ENABLED(CONFIG_ZMK_INPUT_SPLIT)
+
+    subscribed = subscribed && slot->update_layers_handle;
 
     return subscribed ? BT_GATT_ITER_STOP : BT_GATT_ITER_CONTINUE;
 }
@@ -966,10 +976,6 @@ static void split_central_disconnected(struct bt_conn *conn, uint8_t reason) {
 
     k_msgq_put(&peripheral_event_msgq, &ev, K_NO_WAIT);
     k_work_submit(&peripheral_event_work);
-    // struct zmk_peripheral_battery_state_changed ev = {
-    //     .source = peripheral_slot_index_for_conn(conn), .state_of_charge = 0};
-    // k_msgq_put(&peripheral_batt_lvl_msgq, &ev, K_NO_WAIT);
-    // k_work_submit(&peripheral_batt_lvl_work);
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_BLE_CENTRAL_BATTERY_LEVEL_FETCHING)
 
 #if IS_ENABLED(CONFIG_ZMK_INPUT_SPLIT)
@@ -1028,6 +1034,7 @@ K_MSGQ_DEFINE(zmk_split_central_split_run_msgq, sizeof(struct central_cmd_wrappe
 
 void split_central_split_run_callback(struct k_work *work) {
     struct central_cmd_wrapper payload_wrapper;
+    int err;
 
     LOG_DBG("");
 
@@ -1060,7 +1067,7 @@ void split_central_split_run_callback(struct k_work *work) {
                         payload.behavior_dev);
             }
 
-            int err = bt_gatt_write_without_response(
+            err = bt_gatt_write_without_response(
                 peripherals[payload_wrapper.source].conn,
                 peripherals[payload_wrapper.source].run_behavior_handle, &payload,
                 sizeof(struct zmk_split_run_behavior_payload), true);
@@ -1086,7 +1093,7 @@ void split_central_split_run_callback(struct k_work *work) {
                 break;
             }
 
-            int err = bt_gatt_write_without_response(
+            err = bt_gatt_write_without_response(
                 peripherals[payload_wrapper.source].conn,
                 peripherals[payload_wrapper.source].update_hid_indicators,
                 &payload_wrapper.cmd.data.set_hid_indicators.indicators,
@@ -1097,6 +1104,18 @@ void split_central_split_run_callback(struct k_work *work) {
             }
             break;
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_PERIPHERAL_HID_INDICATORS)
+        case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_LAYERS:
+            err = bt_gatt_write_without_response(
+                peripherals[payload_wrapper.source].conn,
+                peripherals[payload_wrapper.source].update_layers_handle,
+                &payload_wrapper.cmd.data.set_rgb_layers.layers,
+                sizeof(payload_wrapper.cmd.data.set_rgb_layers.layers), true);
+
+            if (err) {
+                LOG_ERR("Failed to send layers to peripheral (err %d)", err);
+            }
+            break;
+
         default:
             LOG_WRN("Unsupported wrapped central command type %d", payload_wrapper.cmd.type);
             return;
@@ -1178,6 +1197,7 @@ static int split_central_bt_send_command(uint8_t source,
     }
 
     switch (cmd.type) {
+    case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_RGB_LAYERS:
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_HID_INDICATORS:
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_SET_PHYSICAL_LAYOUT:
     case ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_INVOKE_BEHAVIOR: {
@@ -1288,8 +1308,7 @@ static int finish_init() {
 void peripheral_event_work_callback(struct k_work *work) {
     struct peripheral_event_wrapper ev;
     while (k_msgq_get(&peripheral_event_msgq, &ev, K_NO_WAIT) == 0) {
-        LOG_DBG("Trigger key position state change for %d",
-                ev.event.data.key_position_event.position);
+        LOG_DBG("Trigger key position state change of type %d", ev.event.type);
         zmk_split_transport_central_peripheral_event_handler(&bt_central, ev.source, ev.event);
     }
 }
