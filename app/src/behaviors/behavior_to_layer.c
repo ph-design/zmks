@@ -20,7 +20,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static int to_keymap_binding_pressed(struct zmk_behavior_binding *binding,
                                      struct zmk_behavior_binding_event event) {
     LOG_DBG("position %d layer %d", event.position, binding->param1);
-    zmk_keymap_layer_to(binding->param1);
+    zmk_keymap_layer_to(binding->param1, true);
     return ZMK_BEHAVIOR_OPAQUE;
 }
 
