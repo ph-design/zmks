@@ -30,6 +30,7 @@
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/events/underglow_color_changed.h>
+#include <zmk/events/layer_state_changed.h>
 
 #include <zmk/workqueue.h>
 #include <zmk/events/split_peripheral_layer_changed.h>
@@ -590,6 +591,12 @@ int zmk_rgb_underglow_change_brt(int direction) {
 
     state.color = zmk_rgb_underglow_calc_brt(direction);
 
+#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+    if (state.layer_enabled) {
+        zmk_rgb_underglow_set_layer(rgb_underglow_top_layer(), true);
+    }
+#endif
+
     return zmk_rgb_underglow_save_state();
 }
 
@@ -656,6 +663,12 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
 #endif
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+    if (as_zmk_layer_state_changed(eh)) {
+        uint8_t layer = rgb_underglow_top_layer();
+        LOG_DBG("layer_state_changed, top layer: %d", layer);
+        zmk_rgb_underglow_set_layer(layer, true);
+        return 0;
+    }
     if (as_zmk_split_peripheral_layer_changed(eh)) {
         const struct zmk_split_peripheral_layer_changed *ev =
             as_zmk_split_peripheral_layer_changed(eh);
@@ -702,6 +715,7 @@ ZMK_SUBSCRIPTION(rgb_underglow, zmk_usb_conn_state_changed);
 #endif
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+ZMK_SUBSCRIPTION(rgb_underglow, zmk_layer_state_changed);
 ZMK_SUBSCRIPTION(rgb_underglow, zmk_split_peripheral_layer_changed);
 ZMK_SUBSCRIPTION(rgb_underglow, zmk_underglow_color_changed);
 #endif
