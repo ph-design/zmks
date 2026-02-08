@@ -15,7 +15,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/keymap.h>
 #include <zmk/rgb_underglow_layer.h>
 
-#if !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+#if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
 #include <zmk/split/peripheral_layers.h>
 #endif
 
@@ -75,10 +75,10 @@ uint8_t rgb_underglow_top_layer_with_state(uint32_t state_to_test) {
 }
 
 uint8_t rgb_underglow_top_layer(void) {
-#if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    return zmk_keymap_highest_layer_active();
-#else
+#if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     return peripheral_highest_layer_active();
+#else
+    return zmk_keymap_highest_layer_active();
 #endif
 }
 #endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */
