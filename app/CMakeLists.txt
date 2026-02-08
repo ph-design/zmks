@@ -105,6 +105,14 @@ target_sources_ifdef(CONFIG_ZMK_SPLIT app PRIVATE src/events/split_peripheral_st
 target_sources_ifdef(CONFIG_ZMK_SPLIT app PRIVATE src/events/split_peripheral_layer_changed.c)
 add_subdirectory_ifdef(CONFIG_ZMK_SPLIT src/split)
 
+# For non-split boards with RGB underglow, we need the split peripheral layer
+# event implementation and stub peripheral_layers functions so the linker can
+# resolve symbols used by rgb_underglow.c's layer indicator code.
+if (NOT CONFIG_ZMK_SPLIT AND CONFIG_ZMK_RGB_UNDERGLOW)
+  target_sources(app PRIVATE src/events/split_peripheral_layer_changed.c)
+  target_sources(app PRIVATE src/peripheral_layers_nonsplit.c)
+endif()
+
 target_sources_ifdef(CONFIG_USB_DEVICE_STACK app PRIVATE src/usb.c)
 target_sources_ifdef(CONFIG_ZMK_USB app PRIVATE src/usb_hid.c)
 target_sources_ifdef(CONFIG_ZMK_RGB_UNDERGLOW app PRIVATE src/rgb_underglow.c)
