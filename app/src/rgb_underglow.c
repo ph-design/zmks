@@ -309,6 +309,16 @@ static void sparkle_generate_pixel(int idx, bool offset_counter) {
 #define RIPPLE_MAX_EVENTS 8
 #define RIPPLE_WIDTH 40
 
+/* Buffered effect events from event context into tick context to avoid
+ * blocking and minimize mutex usage. */
+#define EFFECT_EVENT_MSGQ_SIZE 32
+enum effect_event_type { EFFECT_EVENT_RIPPLE = 0 };
+struct effect_event {
+    uint8_t type;
+    uint32_t position;
+};
+K_MSGQ_DEFINE(effect_event_msgq, sizeof(struct effect_event), EFFECT_EVENT_MSGQ_SIZE, 4);
+
 struct ripple_event {
     uint32_t pixel_id;
     uint16_t distance;
@@ -334,211 +344,11 @@ static uint16_t solid_counter = 0;
 /*  Effect Rendering Functions                                               */
 /* ========================================================================= */
 
-/*
- * SOLID effect (ported from zmk-rgb-fx/solid.c)
- * Shows a solid color. When animation_speed > 1, smoothly cycles hue
- * creating a breathing color transition effect.
- */
-static void zmk_rgb_underglow_effect_solid(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
-    struct color_rgb_float rgb;
-    float brt = get_brightness_factor();
-
-    if (state.animation_speed > 1) {
-        /* Cycle through complementary hue with HSL interpolation */
-        uint16_t cycle_duration = ANIMATION_FPS * 10 / state.animation_speed;
-        if (cycle_duration < 1)
-            cycle_duration = 1;
-
-        struct color_hsl hsl2 = hsl;
-        hsl2.h = (hsl.h + 180) % 360;
-
-        struct color_hsl interp;
-        float step = (float)(solid_counter % cycle_duration) / (float)cycle_duration;
-        /* Triangle wave: 0 -> 1 -> 0 for smooth back-and-forth */
-        if (step > 0.5f)
-            step = 1.0f - step;
-        step *= 2.0f;
-        interpolate_hsl(&hsl, &hsl2, &interp, step);
-        hsl_to_rgb_float(&interp, &rgb);
-
-        solid_counter++;
-        if (solid_counter >= cycle_duration)
-            solid_counter = 0;
-    } else {
-        hsl_to_rgb_float(&hsl, &rgb);
-    }
-
-    rgb.r *= brt;
-    rgb.g *= brt;
-    rgb.b *= brt;
-
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        fx_pixels[i] = rgb;
-    }
-}
-
-/*
- * LINEAR GRADIENT effect (ported from zmk-rgb-fx/linear_gradient.c)
- * Creates a scrolling 3-color gradient (base + 2 triadic colors) across the strip.
- */
-static void zmk_rgb_underglow_effect_gradient(void) {
-    struct color_hsl hsl1 = hsb_to_hsl(state.color);
-    struct color_hsl hsl2 = hsl1;
-    hsl2.h = (hsl1.h + 120) % 360;
-    struct color_hsl hsl3 = hsl1;
-    hsl3.h = (hsl1.h + 240) % 360;
-
-    struct color_rgb_float rgb1, rgb2, rgb3;
-    hsl_to_rgb_float(&hsl1, &rgb1);
-    hsl_to_rgb_float(&hsl2, &rgb2);
-    hsl_to_rgb_float(&hsl3, &rgb3);
-
-    float brt = get_brightness_factor();
-    float gradient_width = (float)STRIP_NUM_PIXELS;
-    struct color_rgb_float colors[3] = {rgb1, rgb2, rgb3};
-
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        float distance = float_mod(gradient_width + (float)i - gradient_offset, gradient_width);
-        if (distance < 0)
-            distance += gradient_width;
-
-        float segment_width = gradient_width / 3.0f;
-        int from_idx = (int)(distance / segment_width);
-        if (from_idx > 2)
-            from_idx = 2;
-        float step = (distance - from_idx * segment_width) / segment_width;
-        if (step > 1.0f)
-            step = 1.0f;
-
-        struct color_rgb_float result;
-        interpolate_rgb(&colors[from_idx], &colors[(from_idx + 1) % 3], &result, step);
-
-        result.r *= brt;
-        result.g *= brt;
-        result.b *= brt;
-        fx_pixels[i] = result;
-    }
-
-    /* Scroll */
-    gradient_offset += (float)state.animation_speed * 0.15f;
-    if (gradient_offset >= gradient_width) {
-        gradient_offset -= gradient_width;
-    }
-}
-
-/*
- * SPARKLE effect (ported from zmk-rgb-fx/sparkle.c)
- * Random twinkling pixels that fade in and out independently.
- */
-static void zmk_rgb_underglow_effect_sparkle(void) {
-    float brt = get_brightness_factor();
-
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        if (sparkle_data[i].counter == 0) {
-            sparkle_generate_pixel(i, false);
-        }
-
-        sparkle_data[i].counter--;
-
-        float intensity;
-        if (sparkle_data[i].total_frames <= sparkle_data[i].counter) {
-            /* Fade in phase */
-            intensity = 2.0f - (sparkle_data[i].step * (float)(sparkle_data[i].counter));
-        } else {
-            /* Fade out phase */
-            intensity = sparkle_data[i].step * (float)(sparkle_data[i].counter);
-        }
-        if (intensity < 0)
-            intensity = 0;
-        if (intensity > 1.0f)
-            intensity = 1.0f;
-
-        fx_pixels[i].r = intensity * sparkle_data[i].color.r * brt;
-        fx_pixels[i].g = intensity * sparkle_data[i].color.g * brt;
-        fx_pixels[i].b = intensity * sparkle_data[i].color.b * brt;
-    }
-}
-
-/*
- * RIPPLE effect (ported from zmk-rgb-fx/ripple.c)
- * When a key is pressed, a ripple wave expands outward from that LED position.
- * Uses simplified 1D distance based on pixel index difference.
- */
-static void zmk_rgb_underglow_effect_ripple(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
-    struct color_rgb_float base_color;
-    hsl_to_rgb_float(&hsl, &base_color);
-    float brt = get_brightness_factor();
-
-    /* Clear to black */
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        fx_pixels[i].r = 0;
-        fx_pixels[i].g = 0;
-        fx_pixels[i].b = 0;
-    }
-
-    /* Ripple speed scales with animation_speed */
-    uint8_t distance_per_frame = 3 + state.animation_speed * 2;
-    uint8_t event_frames = 255 / distance_per_frame;
-    if (event_frames < 1)
-        event_frames = 1;
-
-    /* Render each active ripple event
-     * Protect ring buffer access with a mutex to avoid races between the
-     * event listener (calling ripple_add_event) and the rendering tick.
-     */
-    k_mutex_lock(&ripple_mutex, K_FOREVER);
-    uint8_t idx = ripple_events_start;
-    int processed = 0;
-    while (idx != ripple_events_end && processed < ripple_num_events) {
-        struct ripple_event *event = &ripple_events[idx];
-        /* Copy event locally to minimize time holding the mutex while rendering */
-        struct ripple_event local_event = *event;
-        k_mutex_unlock(&ripple_mutex);
-
-        for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            /* 1D distance: scale pixel index difference to 0-255 range */
-            int pixel_dist =
-                (int)(((float)abs((int)j - (int)local_event.pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
-
-            int diff = abs(pixel_dist - (int)local_event.distance);
-            if (diff < RIPPLE_WIDTH) {
-                float intensity = (1.0f - (float)diff / (float)RIPPLE_WIDTH) * brt;
-
-                struct color_rgb_float color = {
-                    .r = intensity * base_color.r,
-                    .g = intensity * base_color.g,
-                    .b = intensity * base_color.b,
-                };
-
-                /* Lighten blending: take max of each channel */
-                if (color.r > fx_pixels[j].r)
-                    fx_pixels[j].r = color.r;
-                if (color.g > fx_pixels[j].g)
-                    fx_pixels[j].g = color.g;
-                if (color.b > fx_pixels[j].b)
-                    fx_pixels[j].b = color.b;
-            }
-        }
-
-        /* Advance the ripple -- update shared buffer under mutex */
-        k_mutex_lock(&ripple_mutex, K_FOREVER);
-        /* Re-fetch pointer in case buffer rotated */
-        struct ripple_event *pe = &ripple_events[idx];
-        if (pe->counter < event_frames) {
-            pe->distance += distance_per_frame;
-            pe->counter++;
-        } else {
-            ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
-            ripple_num_events--;
-        }
-
-        idx = (idx + 1) % RIPPLE_MAX_EVENTS;
-        processed++;
-    }
-    k_mutex_unlock(&ripple_mutex);
-}
+/* Effects moved into separate files to keep this file smaller */
+#include "rgb_effects/effect_solid.inc.c"
+#include "rgb_effects/effect_gradient.inc.c"
+#include "rgb_effects/effect_sparkle.inc.c"
+#include "rgb_effects/effect_ripple.inc.c"
 
 static void ripple_add_event(uint32_t position) {
     k_mutex_lock(&ripple_mutex, K_FOREVER);
@@ -617,6 +427,14 @@ static void zmk_rgb_underglow_apply_layer_overlay(void) {
 /* ========================================================================= */
 
 static void zmk_rgb_underglow_tick(struct k_work *work) {
+    /* Drain any pending effect events queued from event context */
+    struct effect_event ev;
+    while (k_msgq_get(&effect_event_msgq, &ev, K_NO_WAIT) == 0) {
+        if (ev.type == EFFECT_EVENT_RIPPLE) {
+            ripple_add_event(ev.position);
+        }
+    }
+
     switch (state.current_effect) {
     case UNDERGLOW_EFFECT_SOLID:
         zmk_rgb_underglow_effect_solid();
@@ -987,7 +805,9 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
     if (as_zmk_position_state_changed(eh)) {
         const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
         if (ev->state && state.on && state.current_effect == UNDERGLOW_EFFECT_RIPPLE) {
-            ripple_add_event(ev->position);
+            struct effect_event e = {.type = EFFECT_EVENT_RIPPLE, .position = ev->position};
+            /* Non-blocking enqueue; drop if full to avoid blocking event context */
+            (void)k_msgq_put(&effect_event_msgq, &e, K_NO_WAIT);
         }
         return ZMK_EV_EVENT_BUBBLE;
     }
