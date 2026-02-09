@@ -320,6 +320,9 @@ static uint8_t ripple_events_start = 0;
 static uint8_t ripple_events_end = 0;
 static uint8_t ripple_num_events = 0;
 
+/* Mutex to protect ripple event ring buffer from concurrent access */
+static struct k_mutex ripple_mutex;
+
 /* ========================================================================= */
 /*  Gradient & Solid Effect State                                            */
 /* ========================================================================= */
@@ -481,18 +484,25 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     if (event_frames < 1)
         event_frames = 1;
 
-    /* Render each active ripple event */
+    /* Render each active ripple event
+     * Protect ring buffer access with a mutex to avoid races between the
+     * event listener (calling ripple_add_event) and the rendering tick.
+     */
+    k_mutex_lock(&ripple_mutex, K_FOREVER);
     uint8_t idx = ripple_events_start;
     int processed = 0;
     while (idx != ripple_events_end && processed < ripple_num_events) {
         struct ripple_event *event = &ripple_events[idx];
+        /* Copy event locally to minimize time holding the mutex while rendering */
+        struct ripple_event local_event = *event;
+        k_mutex_unlock(&ripple_mutex);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
             /* 1D distance: scale pixel index difference to 0-255 range */
             int pixel_dist =
-                (int)(((float)abs((int)j - (int)event->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
+                (int)(((float)abs((int)j - (int)local_event.pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
 
-            int diff = abs(pixel_dist - (int)event->distance);
+            int diff = abs(pixel_dist - (int)local_event.distance);
             if (diff < RIPPLE_WIDTH) {
                 float intensity = (1.0f - (float)diff / (float)RIPPLE_WIDTH) * brt;
 
@@ -512,10 +522,13 @@ static void zmk_rgb_underglow_effect_ripple(void) {
             }
         }
 
-        /* Advance the ripple */
-        if (event->counter < event_frames) {
-            event->distance += distance_per_frame;
-            event->counter++;
+        /* Advance the ripple -- update shared buffer under mutex */
+        k_mutex_lock(&ripple_mutex, K_FOREVER);
+        /* Re-fetch pointer in case buffer rotated */
+        struct ripple_event *pe = &ripple_events[idx];
+        if (pe->counter < event_frames) {
+            pe->distance += distance_per_frame;
+            pe->counter++;
         } else {
             ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
             ripple_num_events--;
@@ -524,9 +537,11 @@ static void zmk_rgb_underglow_effect_ripple(void) {
         idx = (idx + 1) % RIPPLE_MAX_EVENTS;
         processed++;
     }
+    k_mutex_unlock(&ripple_mutex);
 }
 
 static void ripple_add_event(uint32_t position) {
+    k_mutex_lock(&ripple_mutex, K_FOREVER);
     if (ripple_num_events >= RIPPLE_MAX_EVENTS) {
         /* Drop oldest event */
         ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
@@ -542,6 +557,7 @@ static void ripple_add_event(uint32_t position) {
 
     ripple_events_end = (ripple_events_end + 1) % RIPPLE_MAX_EVENTS;
     ripple_num_events++;
+    k_mutex_unlock(&ripple_mutex);
 }
 
 /* ========================================================================= */
@@ -732,6 +748,9 @@ static int zmk_rgb_underglow_init(void) {
 #endif
 
     sparkle_init_all();
+
+    /* Initialize ripple mutex to protect ring buffer access */
+    k_mutex_init(&ripple_mutex);
 
     if (state.on) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
