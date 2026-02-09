@@ -703,16 +703,23 @@ static int zmk_rgb_underglow_init(void) {
     state.on = zmk_usb_is_powered();
 #endif
 
+#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+    /* Set layer_enabled on first boot when default effect is layer indicators */
+    if (state.current_effect == UNDERGLOW_EFFECT_LAYER_INDICATORS) {
+        state.layer_enabled = true;
+    }
+#endif
+
     sparkle_init_all();
 
-    if (state.on) {
-        k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
-    }
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
     if (state.layer_enabled) {
         zmk_rgb_underglow_set_layer(rgb_underglow_top_layer(), true);
-    }
+    } else
 #endif
+    if (state.on) {
+        k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
+    }
     return 0;
 }
 
