@@ -327,7 +327,6 @@ struct ripple_event {
 
 static struct ripple_event ripple_events[RIPPLE_MAX_EVENTS];
 static uint8_t ripple_events_start = 0;
-static uint8_t ripple_events_end = 0;
 static uint8_t ripple_num_events = 0;
 
 /* Mutex to protect ripple event ring buffer from concurrent access */
@@ -361,11 +360,11 @@ static void ripple_add_event(uint32_t position) {
     /* Map key position to pixel index */
     uint32_t pixel = position % STRIP_NUM_PIXELS;
 
-    ripple_events[ripple_events_end].pixel_id = pixel;
-    ripple_events[ripple_events_end].distance = 0;
-    ripple_events[ripple_events_end].counter = 0;
+    uint8_t end = (ripple_events_start + ripple_num_events) % RIPPLE_MAX_EVENTS;
+    ripple_events[end].pixel_id = pixel;
+    ripple_events[end].distance = 0;
+    ripple_events[end].counter = 0;
 
-    ripple_events_end = (ripple_events_end + 1) % RIPPLE_MAX_EVENTS;
     ripple_num_events++;
     k_mutex_unlock(&ripple_mutex);
 }
@@ -674,7 +673,6 @@ int zmk_rgb_underglow_select_effect(int effect) {
 
     /* Reset ripple events */
     ripple_events_start = 0;
-    ripple_events_end = 0;
     ripple_num_events = 0;
 
     return zmk_rgb_underglow_save_state();
