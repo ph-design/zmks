@@ -49,6 +49,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define UNDERGLOW_LAYER_ENABLED 1
 #endif
 
+static inline int effect_pixel_lookup(int led_idx) {
+#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
+    return rgb_pixel_lookup(led_idx);
+#else
+    return led_idx;
+#endif
+}
+
 #define HUE_MAX 360
 #define SAT_MAX 100
 #define BRT_MAX 100
@@ -339,6 +347,10 @@ static struct k_mutex ripple_mutex;
 /* Per-pixel fade brightness: 255 = just pressed, 0 = off */
 static uint8_t reactive_brightness[STRIP_NUM_PIXELS];
 
+/* Inverse pixel lookup: key matrix position → LED strip index.
+ * Built at init from the pixel-lookup DT property. */
+static uint8_t key_to_pixel[STRIP_NUM_PIXELS];
+
 /* ========================================================================= */
 /*  Gradient & Solid Effect State                                            */
 /* ========================================================================= */
@@ -378,23 +390,22 @@ typedef void (*effect_reset_fn)(void);
 
 struct rgb_effect_desc {
     effect_render_fn render;
-    effect_keypress_fn on_keypress;  /* NULL = effect ignores key events */
-    effect_reset_fn reset;           /* NULL = no state to reset */
+    effect_keypress_fn on_keypress; /* NULL = effect ignores key events */
+    effect_reset_fn reset;          /* NULL = no state to reset */
 };
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
-    [UNDERGLOW_EFFECT_SOLID]    = { .render = zmk_rgb_underglow_effect_solid,
-                                    .reset  = solid_reset },
-    [UNDERGLOW_EFFECT_GRADIENT] = { .render = zmk_rgb_underglow_effect_gradient,
-                                    .reset  = gradient_reset },
-    [UNDERGLOW_EFFECT_SPARKLE]  = { .render = zmk_rgb_underglow_effect_sparkle,
-                                    .reset  = sparkle_init_all },
-    [UNDERGLOW_EFFECT_RIPPLE]   = { .render = zmk_rgb_underglow_effect_ripple,
-                                    .on_keypress = ripple_add_event,
-                                    .reset  = ripple_reset },
-    [UNDERGLOW_EFFECT_REACTIVE] = { .render = zmk_rgb_underglow_effect_reactive,
-                                    .on_keypress = reactive_add_event,
-                                    .reset  = reactive_reset },
+    [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid, .reset = solid_reset},
+    [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
+                                   .reset = gradient_reset},
+    [UNDERGLOW_EFFECT_SPARKLE] = {.render = zmk_rgb_underglow_effect_sparkle,
+                                  .reset = sparkle_init_all},
+    [UNDERGLOW_EFFECT_RIPPLE] = {.render = zmk_rgb_underglow_effect_ripple,
+                                 .on_keypress = ripple_add_event,
+                                 .reset = ripple_reset},
+    [UNDERGLOW_EFFECT_REACTIVE] = {.render = zmk_rgb_underglow_effect_reactive,
+                                   .on_keypress = reactive_add_event,
+                                   .reset = reactive_reset},
 };
 
 /* ========================================================================= */
@@ -575,6 +586,14 @@ static int zmk_rgb_underglow_init(void) {
         state.current_effect = UNDERGLOW_EFFECT_SOLID;
     }
 #endif
+
+    /* Build inverse pixel lookup table: key position → LED strip index */
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        int key_pos = effect_pixel_lookup(i);
+        if (key_pos >= 0 && key_pos < STRIP_NUM_PIXELS) {
+            key_to_pixel[key_pos] = (uint8_t)i;
+        }
+    }
 
     /* Initialize ripple mutex BEFORE any reset that may lock it */
     k_mutex_init(&ripple_mutex);

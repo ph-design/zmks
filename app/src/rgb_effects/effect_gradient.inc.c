@@ -16,7 +16,9 @@ static void zmk_rgb_underglow_effect_gradient(void) {
     struct color_rgb_float colors[3] = {rgb1, rgb2, rgb3};
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        float distance = float_mod(gradient_width + (float)i - gradient_offset, gradient_width);
+        /* Map LED strip index to physical key position for smooth gradient */
+        int key_pos = effect_pixel_lookup(i);
+        float distance = float_mod(gradient_width + (float)key_pos - gradient_offset, gradient_width);
         if (distance < 0)
             distance += gradient_width;
 

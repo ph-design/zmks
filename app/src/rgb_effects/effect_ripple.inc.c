@@ -1,6 +1,8 @@
 /* RIPPLE effect: expanding rings from key press positions */
 
 static void ripple_add_event(uint32_t position) {
+    if (position >= STRIP_NUM_PIXELS)
+        return;
     k_mutex_lock(&ripple_mutex, K_FOREVER);
     if (ripple_num_events >= RIPPLE_MAX_EVENTS) {
         /* Drop oldest event */
@@ -8,9 +10,8 @@ static void ripple_add_event(uint32_t position) {
         ripple_num_events--;
     }
 
-    uint32_t pixel = position % STRIP_NUM_PIXELS;
     uint8_t end = (ripple_events_start + ripple_num_events) % RIPPLE_MAX_EVENTS;
-    ripple_events[end].pixel_id = pixel;
+    ripple_events[end].pixel_id = position; /* key matrix position */
     ripple_events[end].distance = 0;
     ripple_events[end].counter = 0;
     ripple_num_events++;
@@ -58,8 +59,10 @@ static void zmk_rgb_underglow_effect_ripple(void) {
         struct ripple_event *ev = &local_events[i];
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
+            /* Map LED strip index to physical key position for distance calc */
+            int key_pos_j = effect_pixel_lookup(j);
             int pixel_dist =
-                (int)(((float)abs((int)j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
+                (int)(((float)abs(key_pos_j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
 
             int diff = abs(pixel_dist - (int)ev->distance);
             if (diff < RIPPLE_WIDTH) {
@@ -96,9 +99,6 @@ static void zmk_rgb_underglow_effect_ripple(void) {
         /* expired events left as-is; they will be removed below */
     }
 
-    /* Phase 2: remove expired events strictly from the front.
-     * Stop at the first non-expired event; this is safe because events
-     * are consumed FIFO and the counter monotonically increases with age. */
     while (ripple_num_events > 0) {
         struct ripple_event *front = &ripple_events[ripple_events_start];
         if (front->counter >= event_frames) {
