@@ -1,4 +1,29 @@
-/* RIPPLE effect (moved out of rgb_underglow.c) */
+/* RIPPLE effect: expanding rings from key press positions */
+
+static void ripple_add_event(uint32_t position) {
+    k_mutex_lock(&ripple_mutex, K_FOREVER);
+    if (ripple_num_events >= RIPPLE_MAX_EVENTS) {
+        /* Drop oldest event */
+        ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
+        ripple_num_events--;
+    }
+
+    uint32_t pixel = position % STRIP_NUM_PIXELS;
+    uint8_t end = (ripple_events_start + ripple_num_events) % RIPPLE_MAX_EVENTS;
+    ripple_events[end].pixel_id = pixel;
+    ripple_events[end].distance = 0;
+    ripple_events[end].counter = 0;
+    ripple_num_events++;
+    k_mutex_unlock(&ripple_mutex);
+}
+
+static void ripple_reset(void) {
+    k_mutex_lock(&ripple_mutex, K_FOREVER);
+    ripple_events_start = 0;
+    ripple_num_events = 0;
+    k_mutex_unlock(&ripple_mutex);
+}
+
 static void zmk_rgb_underglow_effect_ripple(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float base_color;
@@ -17,6 +42,8 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     uint8_t event_frames = 255 / distance_per_frame;
     if (event_frames < 1)
         event_frames = 1;
+
+    /* Snapshot active events under mutex, then render without holding it. */
     k_mutex_lock(&ripple_mutex, K_FOREVER);
     uint8_t count = ripple_num_events;
     uint8_t start = ripple_events_start;
@@ -26,11 +53,11 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     }
     k_mutex_unlock(&ripple_mutex);
 
+    /* Render each active ripple event (no lock held) */
     for (int i = 0; i < count; i++) {
         struct ripple_event *ev = &local_events[i];
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            /* 1D distance: scale pixel index difference to 0-255 range */
             int pixel_dist =
                 (int)(((float)abs((int)j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
 

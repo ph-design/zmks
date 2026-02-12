@@ -43,3 +43,7 @@ static void zmk_rgb_underglow_effect_gradient(void) {
         gradient_offset -= gradient_width;
     }
 }
+
+static void gradient_reset(void) {
+    gradient_offset = 0.0f;
+}

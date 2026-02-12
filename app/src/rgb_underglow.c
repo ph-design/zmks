@@ -243,6 +243,7 @@ enum rgb_underglow_effect {
     UNDERGLOW_EFFECT_GRADIENT, /* Linear gradient with scrolling */
     UNDERGLOW_EFFECT_SPARKLE,  /* Random sparkle */
     UNDERGLOW_EFFECT_RIPPLE,   /* Keypress ripple */
+    UNDERGLOW_EFFECT_REACTIVE, /* Keypress reactive fade */
     UNDERGLOW_EFFECT_NUMBER
 };
 
@@ -303,21 +304,22 @@ static void sparkle_generate_pixel(int idx, bool offset_counter) {
 }
 
 /* ========================================================================= */
-/*  Ripple Effect State (ported from zmk-rgb-fx/ripple.c)                    */
+/*  Keypress Event Infrastructure (shared by key-interactive effects)        */
 /* ========================================================================= */
 
-#define RIPPLE_MAX_EVENTS 8
-#define RIPPLE_WIDTH 40
-
-/* Buffered effect events from event context into tick context to avoid
- * blocking and minimize mutex usage. */
 #define EFFECT_EVENT_MSGQ_SIZE 32
-enum effect_event_type { EFFECT_EVENT_RIPPLE = 0 };
+
 struct effect_event {
-    uint8_t type;
     uint32_t position;
 };
 K_MSGQ_DEFINE(effect_event_msgq, sizeof(struct effect_event), EFFECT_EVENT_MSGQ_SIZE, 4);
+
+/* ========================================================================= */
+/*  Ripple Effect State                                                      */
+/* ========================================================================= */
+
+#define RIPPLE_MAX_EVENTS 16
+#define RIPPLE_WIDTH 40
 
 struct ripple_event {
     uint32_t pixel_id;
@@ -328,9 +330,14 @@ struct ripple_event {
 static struct ripple_event ripple_events[RIPPLE_MAX_EVENTS];
 static uint8_t ripple_events_start = 0;
 static uint8_t ripple_num_events = 0;
-
-/* Mutex to protect ripple event ring buffer from concurrent access */
 static struct k_mutex ripple_mutex;
+
+/* ========================================================================= */
+/*  Reactive Effect State                                                    */
+/* ========================================================================= */
+
+/* Per-pixel fade brightness: 255 = just pressed, 0 = off */
+static uint8_t reactive_brightness[STRIP_NUM_PIXELS];
 
 /* ========================================================================= */
 /*  Gradient & Solid Effect State                                            */
@@ -343,31 +350,52 @@ static uint16_t solid_counter = 0;
 /*  Effect Rendering Functions                                               */
 /* ========================================================================= */
 
-/* Effects moved into separate files to keep this file smaller */
+/* Each effect file can define:
+ *   - render function    (required)
+ *   - on_keypress handler (optional, for key-interactive effects)
+ *   - reset function      (optional, to clear effect state)
+ */
 #include "rgb_effects/effect_solid.inc.c"
 #include "rgb_effects/effect_gradient.inc.c"
 #include "rgb_effects/effect_sparkle.inc.c"
 #include "rgb_effects/effect_ripple.inc.c"
+#include "rgb_effects/effect_reactive.inc.c"
 
-static void ripple_add_event(uint32_t position) {
-    k_mutex_lock(&ripple_mutex, K_FOREVER);
-    if (ripple_num_events >= RIPPLE_MAX_EVENTS) {
-        /* Drop oldest event */
-        ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
-        ripple_num_events--;
-    }
+/* ========================================================================= */
+/*  Effect Descriptor Table                                                  */
+/* ========================================================================= */
 
-    /* Map key position to pixel index */
-    uint32_t pixel = position % STRIP_NUM_PIXELS;
+/* To add a new key-interactive effect:
+ * 1. Add entry to enum rgb_underglow_effect
+ * 2. Create rgb_effects/effect_xxx.inc.c with render / on_keypress / reset
+ * 3. Add a row to effect_table[] below
+ * That's it — tick, event listener, init, and reset are all table-driven.
+ */
 
-    uint8_t end = (ripple_events_start + ripple_num_events) % RIPPLE_MAX_EVENTS;
-    ripple_events[end].pixel_id = pixel;
-    ripple_events[end].distance = 0;
-    ripple_events[end].counter = 0;
+typedef void (*effect_render_fn)(void);
+typedef void (*effect_keypress_fn)(uint32_t position);
+typedef void (*effect_reset_fn)(void);
 
-    ripple_num_events++;
-    k_mutex_unlock(&ripple_mutex);
-}
+struct rgb_effect_desc {
+    effect_render_fn render;
+    effect_keypress_fn on_keypress;  /* NULL = effect ignores key events */
+    effect_reset_fn reset;           /* NULL = no state to reset */
+};
+
+static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
+    [UNDERGLOW_EFFECT_SOLID]    = { .render = zmk_rgb_underglow_effect_solid,
+                                    .reset  = solid_reset },
+    [UNDERGLOW_EFFECT_GRADIENT] = { .render = zmk_rgb_underglow_effect_gradient,
+                                    .reset  = gradient_reset },
+    [UNDERGLOW_EFFECT_SPARKLE]  = { .render = zmk_rgb_underglow_effect_sparkle,
+                                    .reset  = sparkle_init_all },
+    [UNDERGLOW_EFFECT_RIPPLE]   = { .render = zmk_rgb_underglow_effect_ripple,
+                                    .on_keypress = ripple_add_event,
+                                    .reset  = ripple_reset },
+    [UNDERGLOW_EFFECT_REACTIVE] = { .render = zmk_rgb_underglow_effect_reactive,
+                                    .on_keypress = reactive_add_event,
+                                    .reset  = reactive_reset },
+};
 
 /* ========================================================================= */
 /*  Layer Indicator Effect (kept from original)                              */
@@ -426,28 +454,18 @@ static void zmk_rgb_underglow_apply_layer_overlay(void) {
 /* ========================================================================= */
 
 static void zmk_rgb_underglow_tick(struct k_work *work) {
-    /* Drain any pending effect events queued from event context */
+    const struct rgb_effect_desc *eff = &effect_table[state.current_effect];
+
+    /* Drain any pending keypress events */
     struct effect_event ev;
     while (k_msgq_get(&effect_event_msgq, &ev, K_NO_WAIT) == 0) {
-        if (ev.type == EFFECT_EVENT_RIPPLE) {
-            ripple_add_event(ev.position);
+        if (eff->on_keypress) {
+            eff->on_keypress(ev.position);
         }
     }
 
-    switch (state.current_effect) {
-    case UNDERGLOW_EFFECT_SOLID:
-        zmk_rgb_underglow_effect_solid();
-        break;
-    case UNDERGLOW_EFFECT_GRADIENT:
-        zmk_rgb_underglow_effect_gradient();
-        break;
-    case UNDERGLOW_EFFECT_SPARKLE:
-        zmk_rgb_underglow_effect_sparkle();
-        break;
-    case UNDERGLOW_EFFECT_RIPPLE:
-        zmk_rgb_underglow_effect_ripple();
-        break;
-    }
+    /* Run current effect renderer */
+    eff->render();
 
     /* Convert float pixels to LED strip format */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
@@ -566,7 +584,11 @@ static int zmk_rgb_underglow_init(void) {
 
     sparkle_init_all();
 
-    /* Initialize ripple mutex to protect ring buffer access */
+    /* Initialize all effect state */
+    for (int i = 0; i < UNDERGLOW_EFFECT_NUMBER; i++) {
+        if (effect_table[i].reset)
+            effect_table[i].reset();
+    }
     k_mutex_init(&ripple_mutex);
 
     if (state.on) {
@@ -615,9 +637,11 @@ int zmk_rgb_underglow_transient_on(void) {
 
     state.on = true;
     state.animation_step = 0;
-    solid_counter = 0;
-    gradient_offset = 0.0f;
-    sparkle_init_all();
+    /* Reset all effect state */
+    for (int i = 0; i < UNDERGLOW_EFFECT_NUMBER; i++) {
+        if (effect_table[i].reset)
+            effect_table[i].reset();
+    }
     k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
     return 0;
 }
@@ -667,13 +691,13 @@ int zmk_rgb_underglow_select_effect(int effect) {
 
     state.current_effect = effect;
     state.animation_step = 0;
-    solid_counter = 0;
-    gradient_offset = 0.0f;
-    sparkle_init_all();
 
-    /* Reset ripple events */
-    ripple_events_start = 0;
-    ripple_num_events = 0;
+    /* Reset all effect state and purge stale keypress events */
+    k_msgq_purge(&effect_event_msgq);
+    for (int i = 0; i < UNDERGLOW_EFFECT_NUMBER; i++) {
+        if (effect_table[i].reset)
+            effect_table[i].reset();
+    }
 
     return zmk_rgb_underglow_save_state();
 }
@@ -799,11 +823,11 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
      * layer_state_changed and underglow_color_changed events
      * are handled implicitly since the overlay reads current state each frame. */
 
-    /* Handle keypress events for ripple effect */
+    /* Handle keypress events for key-interactive effects (ripple, reactive, etc.) */
     if (as_zmk_position_state_changed(eh)) {
         const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
-        if (ev->state && state.on && state.current_effect == UNDERGLOW_EFFECT_RIPPLE) {
-            struct effect_event e = {.type = EFFECT_EVENT_RIPPLE, .position = ev->position};
+        if (ev->state && state.on && effect_table[state.current_effect].on_keypress) {
+            struct effect_event e = {.position = ev->position};
             /* Non-blocking enqueue; drop if full to avoid blocking event context */
             (void)k_msgq_put(&effect_event_msgq, &e, K_NO_WAIT);
         }
@@ -831,7 +855,7 @@ ZMK_SUBSCRIPTION(rgb_underglow, zmk_usb_conn_state_changed);
 
 /* Layer overlay is handled in the tick; no explicit subscriptions needed. */
 
-/* Subscribe to key position events for ripple effect */
+/* Subscribe to key position events for key-interactive effects */
 ZMK_SUBSCRIPTION(rgb_underglow, zmk_position_state_changed);
 
 SYS_INIT(zmk_rgb_underglow_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
