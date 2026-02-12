@@ -84,18 +84,30 @@ static void zmk_rgb_underglow_effect_ripple(void) {
 
     /* Advance / expire ripple events under mutex */
     k_mutex_lock(&ripple_mutex, K_FOREVER);
-    uint8_t removed = 0;
+
+    /* Phase 1: advance all snapshot events that are still alive */
     for (int i = 0; i < count; i++) {
         uint8_t slot = (start + i) % RIPPLE_MAX_EVENTS;
         struct ripple_event *pe = &ripple_events[slot];
         if (pe->counter < event_frames) {
             pe->distance += distance_per_frame;
             pe->counter++;
+        }
+        /* expired events left as-is; they will be removed below */
+    }
+
+    /* Phase 2: remove expired events strictly from the front.
+     * Stop at the first non-expired event; this is safe because events
+     * are consumed FIFO and the counter monotonically increases with age. */
+    while (ripple_num_events > 0) {
+        struct ripple_event *front = &ripple_events[ripple_events_start];
+        if (front->counter >= event_frames) {
+            ripple_events_start = (ripple_events_start + 1) % RIPPLE_MAX_EVENTS;
+            ripple_num_events--;
         } else {
-            removed++;
+            break;
         }
     }
-    ripple_events_start = (start + removed) % RIPPLE_MAX_EVENTS;
-    ripple_num_events -= removed;
+
     k_mutex_unlock(&ripple_mutex);
 }

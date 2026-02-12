@@ -584,12 +584,14 @@ static int zmk_rgb_underglow_init(void) {
 
     sparkle_init_all();
 
+    /* Initialize ripple mutex BEFORE any reset that may lock it */
+    k_mutex_init(&ripple_mutex);
+
     /* Initialize all effect state */
     for (int i = 0; i < UNDERGLOW_EFFECT_NUMBER; i++) {
         if (effect_table[i].reset)
             effect_table[i].reset();
     }
-    k_mutex_init(&ripple_mutex);
 
     if (state.on) {
         k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
