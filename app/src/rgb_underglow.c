@@ -247,11 +247,27 @@ static struct color_hsl hsb_to_hsl(struct zmk_led_hsb hsb) {
 /* ========================================================================= */
 
 enum rgb_underglow_effect {
-    UNDERGLOW_EFFECT_SOLID,    /* Solid with multi-color HSL cycling */
-    UNDERGLOW_EFFECT_GRADIENT, /* Linear gradient with scrolling */
-    UNDERGLOW_EFFECT_SPARKLE,  /* Random sparkle */
-    UNDERGLOW_EFFECT_RIPPLE,   /* Keypress ripple */
-    UNDERGLOW_EFFECT_REACTIVE, /* Keypress reactive fade */
+    /* Reordered and extended effects (new additions follow) */
+    UNDERGLOW_EFFECT_SOLID,          /* Static / solid */
+    UNDERGLOW_EFFECT_BREATHING,      /* Breathing */
+    UNDERGLOW_EFFECT_RAINBOW,        /* Hue cycle / rainbow */
+    UNDERGLOW_EFFECT_REACTIVE_ENH,   /* Enhanced reactive variant */
+    UNDERGLOW_EFFECT_WAVE,           /* Wave */
+    UNDERGLOW_EFFECT_SWIRL,          /* Swirl */
+    UNDERGLOW_EFFECT_SNAKE,          /* Snake */
+    UNDERGLOW_EFFECT_KNIGHT,         /* Knight rider */
+    UNDERGLOW_EFFECT_STROBE,         /* Strobe / flash */
+    UNDERGLOW_EFFECT_TWINKLE,        /* Twinkle / glitter */
+    UNDERGLOW_EFFECT_SPIRAL,         /* Spiral */
+    UNDERGLOW_EFFECT_SPIRAL_OUT,     /* Spiral out */
+    UNDERGLOW_EFFECT_SPIRAL_IN,      /* Spiral in */
+
+    /* Existing effects kept after the new ones */
+    UNDERGLOW_EFFECT_GRADIENT,       /* Linear gradient with scrolling */
+    UNDERGLOW_EFFECT_SPARKLE,        /* Random sparkle */
+    UNDERGLOW_EFFECT_RIPPLE,         /* Keypress ripple */
+    UNDERGLOW_EFFECT_REACTIVE,       /* Keypress reactive fade (original) */
+
     UNDERGLOW_EFFECT_NUMBER
 };
 
@@ -368,6 +384,19 @@ static uint16_t solid_counter = 0;
  *   - reset function      (optional, to clear effect state)
  */
 #include "rgb_effects/effect_solid.inc.c"
+#include "rgb_effects/effect_breathing.inc.c"
+#include "rgb_effects/effect_rainbow.inc.c"
+#include "rgb_effects/effect_reactive_enhanced.inc.c"
+#include "rgb_effects/effect_wave.inc.c"
+#include "rgb_effects/effect_swirl.inc.c"
+#include "rgb_effects/effect_snake.inc.c"
+#include "rgb_effects/effect_knight.inc.c"
+#include "rgb_effects/effect_strobe.inc.c"
+#include "rgb_effects/effect_twinkle.inc.c"
+#include "rgb_effects/effect_spiral.inc.c"
+#include "rgb_effects/effect_spiral_out.inc.c"
+#include "rgb_effects/effect_spiral_in.inc.c"
+
 #include "rgb_effects/effect_gradient.inc.c"
 #include "rgb_effects/effect_sparkle.inc.c"
 #include "rgb_effects/effect_ripple.inc.c"
@@ -396,6 +425,22 @@ struct rgb_effect_desc {
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
     [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid, .reset = solid_reset},
+    [UNDERGLOW_EFFECT_BREATHING] = {.render = zmk_rgb_underglow_effect_breathing, .reset = breathing_reset},
+    [UNDERGLOW_EFFECT_RAINBOW] = {.render = zmk_rgb_underglow_effect_rainbow, .reset = rainbow_reset},
+    [UNDERGLOW_EFFECT_REACTIVE_ENH] = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
+                                       .on_keypress = reactive_add_event,
+                                       .reset = reactive_enhanced_reset},
+    [UNDERGLOW_EFFECT_WAVE] = {.render = zmk_rgb_underglow_effect_wave, .reset = wave_reset},
+    [UNDERGLOW_EFFECT_SWIRL] = {.render = zmk_rgb_underglow_effect_swirl, .reset = swirl_reset},
+    [UNDERGLOW_EFFECT_SNAKE] = {.render = zmk_rgb_underglow_effect_snake, .reset = snake_reset},
+    [UNDERGLOW_EFFECT_KNIGHT] = {.render = zmk_rgb_underglow_effect_knight, .reset = knight_reset},
+    [UNDERGLOW_EFFECT_STROBE] = {.render = zmk_rgb_underglow_effect_strobe, .reset = strobe_reset},
+    [UNDERGLOW_EFFECT_TWINKLE] = {.render = zmk_rgb_underglow_effect_twinkle, .reset = twinkle_reset},
+    [UNDERGLOW_EFFECT_SPIRAL] = {.render = zmk_rgb_underglow_effect_spiral, .reset = spiral_reset},
+    [UNDERGLOW_EFFECT_SPIRAL_OUT] = {.render = zmk_rgb_underglow_effect_spiral_out, .reset = spiral_out_reset},
+    [UNDERGLOW_EFFECT_SPIRAL_IN] = {.render = zmk_rgb_underglow_effect_spiral_in, .reset = spiral_in_reset},
+
+    /* Existing ones preserved */
     [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
                                    .reset = gradient_reset},
     [UNDERGLOW_EFFECT_SPARKLE] = {.render = zmk_rgb_underglow_effect_sparkle,
