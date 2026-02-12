@@ -27,3 +27,9 @@ static void zmk_rgb_underglow_effect_sparkle(void) {
         fx_pixels[i].b = intensity * sparkle_data[i].color.b * brt;
     }
 }
+
+static void sparkle_init_all(void) {
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        sparkle_generate_pixel(i, true);
+    }
+}

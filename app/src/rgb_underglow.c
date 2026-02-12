@@ -539,12 +539,6 @@ static struct k_work_delayable underglow_save_work;
 /*  Init                                                                     */
 /* ========================================================================= */
 
-static void sparkle_init_all(void) {
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        sparkle_generate_pixel(i, true);
-    }
-}
-
 static int zmk_rgb_underglow_init(void) {
     led_strip = DEVICE_DT_GET(STRIP_CHOSEN);
 
@@ -581,8 +575,6 @@ static int zmk_rgb_underglow_init(void) {
         state.current_effect = UNDERGLOW_EFFECT_SOLID;
     }
 #endif
-
-    sparkle_init_all();
 
     /* Initialize ripple mutex BEFORE any reset that may lock it */
     k_mutex_init(&ripple_mutex);
