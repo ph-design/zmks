@@ -2,19 +2,33 @@
 static float wave_offset = 0.0f;
 static void zmk_rgb_underglow_effect_wave(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
+    struct color_rgb_float base_rgb;
+    hsl_to_rgb_float(&hsl, &base_rgb);
     float brt = get_brightness_factor();
+    float inv_n = 1.0f / (float)STRIP_NUM_PIXELS;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         int key_pos = effect_pixel_lookup(i);
-        float phase = (float)key_pos / (float)STRIP_NUM_PIXELS;
-        float v = (sinf((phase * 2.0f * M_PI) + wave_offset) + 1.0f) / 2.0f;
-        struct color_hsl step = hsl;
-        struct color_rgb_float rgb;
-        hsl_to_rgb_float(&step, &rgb);
-        rgb.r *= brt * (0.2f + 0.8f * v);
-        rgb.g *= brt * (0.2f + 0.8f * v);
-        rgb.b *= brt * (0.2f + 0.8f * v);
-        fx_pixels[i] = rgb;
+        float phase = (float)key_pos * inv_n;
+        /* Fast sine approximation: parabolic half-wave */
+        float x = phase + wave_offset * (1.0f / (2.0f * M_PI));
+        x = x - (int)x; /* fract */
+        if (x < 0) x += 1.0f;
+        float v;
+        if (x < 0.5f) {
+            float t = x * 2.0f;
+            v = 4.0f * t * (1.0f - t);
+        } else {
+            float t = (x - 0.5f) * 2.0f;
+            v = -4.0f * t * (1.0f - t);
+        }
+        v = (v + 1.0f) * 0.5f; /* normalize to 0..1 */
+        float f = brt * (0.15f + 0.85f * v);
+        fx_pixels[i] = (struct color_rgb_float){
+            .r = base_rgb.r * f,
+            .g = base_rgb.g * f,
+            .b = base_rgb.b * f
+        };
     }
 
     wave_offset += (float)state.animation_speed * 0.05f;
