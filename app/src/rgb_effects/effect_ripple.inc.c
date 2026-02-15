@@ -59,10 +59,8 @@ static void zmk_rgb_underglow_effect_ripple(void) {
         struct ripple_event *ev = &local_events[i];
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            /* Map LED strip index to physical key position for distance calc */
-            int key_pos_j = effect_pixel_lookup(j);
             int pixel_dist =
-                (int)(((float)abs(key_pos_j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
+                (int)(((float)abs(j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
 
             int diff = abs(pixel_dist - (int)ev->distance);
             if (diff < RIPPLE_WIDTH) {

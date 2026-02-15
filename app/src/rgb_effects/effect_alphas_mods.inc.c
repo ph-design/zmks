@@ -32,8 +32,7 @@ static void zmk_rgb_underglow_effect_alphas_mods(void) {
     /* else treat entire strip as one row */
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int key_pos = effect_pixel_lookup(i);
-        int col_in_row = key_pos % row_len;
+        int col_in_row = i % row_len;
         /* First 2 and last 2 columns → "modifier" */
         bool is_mod = (col_in_row < 2) || (col_in_row >= row_len - 2);
         fx_pixels[i] = is_mod ? rgb_mod : rgb_alpha;

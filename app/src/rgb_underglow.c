@@ -251,29 +251,32 @@ static struct color_hsl hsb_to_hsl(struct zmk_led_hsb hsb) {
 /* ========================================================================= */
 
 enum rgb_underglow_effect {
-    /* Minimal / cleaned effect list per request */
-    UNDERGLOW_EFFECT_SOLID,         /* Static / solid */
-    UNDERGLOW_EFFECT_BREATHING,     /* Breathing */
-    UNDERGLOW_EFFECT_RAINBOW,       /* Hue cycle / rainbow */
-    /* Map REACTIVE to enhanced implementation */
-    UNDERGLOW_EFFECT_REACTIVE,      /* Reactive (uses enhanced implementation) */
-    UNDERGLOW_EFFECT_WAVE,          /* Wave */
-    UNDERGLOW_EFFECT_KNIGHT,        /* Knight rider */
-    UNDERGLOW_EFFECT_TWINKLE,       /* Twinkle / glitter */
+    UNDERGLOW_EFFECT_SOLID,            /* 0  Static / solid */
+    UNDERGLOW_EFFECT_BREATHING,        /* 1  Breathing */
+    UNDERGLOW_EFFECT_RAINBOW,          /* 2  Rainbow left-right */
+    UNDERGLOW_EFFECT_RAINBOW_UP_DOWN,  /* 3  Rainbow top-to-bottom */
+    UNDERGLOW_EFFECT_RAINBOW_PINWHEEL, /* 4  Rainbow pinwheel */
+    UNDERGLOW_EFFECT_RAINBOW_OUT_IN,   /* 5  Rainbow radial */
+    UNDERGLOW_EFFECT_REACTIVE_ENH,     /* 6  Reactive enhanced */
+    UNDERGLOW_EFFECT_WAVE,             /* 7  Wave */
+    UNDERGLOW_EFFECT_SWIRL,            /* 8  Swirl */
+    UNDERGLOW_EFFECT_SNAKE,            /* 9  Snake */
+    UNDERGLOW_EFFECT_KNIGHT,           /* 10 Knight rider */
+    UNDERGLOW_EFFECT_STROBE,           /* 11 Strobe */
+    UNDERGLOW_EFFECT_TWINKLE,          /* 12 Twinkle */
+    UNDERGLOW_EFFECT_SPIRAL,           /* 13 Spiral */
+    UNDERGLOW_EFFECT_GRADIENT,         /* 14 Linear gradient */
+    UNDERGLOW_EFFECT_SPARKLE,          /* 15 Sparkle */
+    UNDERGLOW_EFFECT_RIPPLE,           /* 16 Ripple */
+    UNDERGLOW_EFFECT_TYPING_HEATMAP,   /* 17 Typing heatmap */
+    UNDERGLOW_EFFECT_REACTIVE_WIDE,    /* 18 Wide reactive pulse */
+    UNDERGLOW_EFFECT_ALPHAS_MODS,      /* 19 Alpha vs modifier */
+    UNDERGLOW_EFFECT_GRADIENT_UP_DOWN, /* 20 Vertical gradient */
+    UNDERGLOW_EFFECT_SPLASH,           /* 21 Rainbow splash */
+    UNDERGLOW_EFFECT_REACTIVE_CROSS,   /* 22 Reactive cross */
+    UNDERGLOW_EFFECT_DIGITAL_RAIN,     /* 23 Digital rain */
 
-    /* Preserved non-interactive effects */
-    UNDERGLOW_EFFECT_GRADIENT,      /* Linear gradient with scrolling */
-    UNDERGLOW_EFFECT_SPARKLE,       /* Random sparkle */
-    UNDERGLOW_EFFECT_RIPPLE,        /* Keypress ripple */
-
-    /* New effects (QMK-inspired) */
-    UNDERGLOW_EFFECT_ALPHAS_MODS,   /* Dual-hue alpha/modifier split */
-    UNDERGLOW_EFFECT_RAINDROPS,     /* Random hue raindrops */
-    UNDERGLOW_EFFECT_REACTIVE_WIDE, /* Wide radial reactive pulse */
-    UNDERGLOW_EFFECT_REACTIVE_NEXUS,/* Cross/nexus reactive pulse */
-    UNDERGLOW_EFFECT_TYPING_HEATMAP,/* Typing heatmap */
-
-    UNDERGLOW_EFFECT_NUMBER
+    UNDERGLOW_EFFECT_NUMBER /* 24 */
 };
 
 struct rgb_underglow_state {
@@ -393,21 +396,30 @@ static uint16_t solid_counter = 0;
 #include "rgb_effects/effect_rainbow.inc.c"
 #include "rgb_effects/effect_reactive_enhanced.inc.c"
 #include "rgb_effects/effect_wave.inc.c"
+#include "rgb_effects/effect_swirl.inc.c"
+#include "rgb_effects/effect_snake.inc.c"
 #include "rgb_effects/effect_knight.inc.c"
+#include "rgb_effects/effect_strobe.inc.c"
 #include "rgb_effects/effect_twinkle.inc.c"
-
+#include "rgb_effects/effect_spiral.inc.c"
 #include "rgb_effects/effect_gradient.inc.c"
 #include "rgb_effects/effect_sparkle.inc.c"
 #include "rgb_effects/effect_ripple.inc.c"
-
-/* New QMK-inspired effects */
-#include "rgb_effects/effect_alphas_mods.inc.c"
-#include "rgb_effects/effect_raindrops.inc.c"
-#include "rgb_effects/effect_reactive_wide.inc.c"
-#include "rgb_effects/effect_reactive_nexus.inc.c"
 #include "rgb_effects/effect_typing_heatmap.inc.c"
-/* Note: original reactive implementation is no longer included —
-    REACTIVE is mapped to the enhanced implementation above. */
+#include "rgb_effects/effect_reactive_wide.inc.c"
+#include "rgb_effects/effect_alphas_mods.inc.c"
+#include "rgb_effects/effect_gradient_up_down.inc.c"
+#include "rgb_effects/effect_splash.inc.c"
+#include "rgb_effects/effect_reactive_cross.inc.c"
+#include "rgb_effects/effect_digital_rain.inc.c"
+
+/* Disabled effects (files kept, just not included):
+ * - effect_spiral_out.inc.c      (too similar to spiral)
+ * - effect_spiral_in.inc.c       (too similar to spiral)
+ * - effect_reactive.inc.c        (replaced by reactive_enhanced)
+ * - effect_reactive_nexus.inc.c  (replaced by reactive_cross)
+ * - effect_raindrops.inc.c       (too similar to twinkle)
+ */
 
 /* ========================================================================= */
 /*  Effect Descriptor Table                                                  */
@@ -431,40 +443,45 @@ struct rgb_effect_desc {
 };
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
-    [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid, .reset = solid_reset},
-    [UNDERGLOW_EFFECT_BREATHING] = {.render = zmk_rgb_underglow_effect_breathing, .reset = breathing_reset},
-    [UNDERGLOW_EFFECT_RAINBOW] = {.render = zmk_rgb_underglow_effect_rainbow, .reset = rainbow_reset},
-    /* REACTIVE uses the enhanced implementation and keypress handler */
-    [UNDERGLOW_EFFECT_REACTIVE] = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
-                                   .on_keypress = reactive_add_event,
-                                   .reset = reactive_enhanced_reset},
-    [UNDERGLOW_EFFECT_WAVE] = {.render = zmk_rgb_underglow_effect_wave, .reset = wave_reset},
-    [UNDERGLOW_EFFECT_KNIGHT] = {.render = zmk_rgb_underglow_effect_knight, .reset = knight_reset},
-    [UNDERGLOW_EFFECT_TWINKLE] = {.render = zmk_rgb_underglow_effect_twinkle, .reset = twinkle_reset},
-
-    /* Existing ones preserved */
-    [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
-                                   .reset = gradient_reset},
-    [UNDERGLOW_EFFECT_SPARKLE] = {.render = zmk_rgb_underglow_effect_sparkle,
-                                  .reset = sparkle_init_all},
-    [UNDERGLOW_EFFECT_RIPPLE] = {.render = zmk_rgb_underglow_effect_ripple,
-                                 .on_keypress = ripple_add_event,
-                                 .reset = ripple_reset},
-
-    /* New QMK-inspired effects */
-    [UNDERGLOW_EFFECT_ALPHAS_MODS] = {.render = zmk_rgb_underglow_effect_alphas_mods,
-                                      .reset = alphas_mods_reset},
-    [UNDERGLOW_EFFECT_RAINDROPS] = {.render = zmk_rgb_underglow_effect_raindrops,
-                                    .reset = raindrops_reset},
-    [UNDERGLOW_EFFECT_REACTIVE_WIDE] = {.render = zmk_rgb_underglow_effect_reactive_wide,
-                                        .on_keypress = reactive_wide_add_event,
-                                        .reset = reactive_wide_reset},
-    [UNDERGLOW_EFFECT_REACTIVE_NEXUS] = {.render = zmk_rgb_underglow_effect_reactive_nexus,
-                                         .on_keypress = reactive_nexus_add_event,
-                                         .reset = reactive_nexus_reset},
-    [UNDERGLOW_EFFECT_TYPING_HEATMAP] = {.render = zmk_rgb_underglow_effect_typing_heatmap,
-                                         .on_keypress = heatmap_add_event,
-                                         .reset = heatmap_reset},
+    [UNDERGLOW_EFFECT_SOLID]            = {.render = zmk_rgb_underglow_effect_solid, .reset = solid_reset},
+    [UNDERGLOW_EFFECT_BREATHING]        = {.render = zmk_rgb_underglow_effect_breathing, .reset = breathing_reset},
+    [UNDERGLOW_EFFECT_RAINBOW]          = {.render = zmk_rgb_underglow_effect_rainbow, .reset = rainbow_reset},
+    [UNDERGLOW_EFFECT_RAINBOW_UP_DOWN]  = {.render = zmk_rgb_underglow_effect_rainbow_up_down, .reset = rainbow_reset},
+    [UNDERGLOW_EFFECT_RAINBOW_PINWHEEL] = {.render = zmk_rgb_underglow_effect_rainbow_pinwheel, .reset = rainbow_reset},
+    [UNDERGLOW_EFFECT_RAINBOW_OUT_IN]   = {.render = zmk_rgb_underglow_effect_rainbow_out_in, .reset = rainbow_reset},
+    [UNDERGLOW_EFFECT_REACTIVE_ENH]     = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
+                                           .on_keypress = reactive_add_event,
+                                           .reset = reactive_enhanced_reset},
+    [UNDERGLOW_EFFECT_WAVE]             = {.render = zmk_rgb_underglow_effect_wave, .reset = wave_reset},
+    [UNDERGLOW_EFFECT_SWIRL]            = {.render = zmk_rgb_underglow_effect_swirl, .reset = swirl_reset},
+    [UNDERGLOW_EFFECT_SNAKE]            = {.render = zmk_rgb_underglow_effect_snake, .reset = snake_reset},
+    [UNDERGLOW_EFFECT_KNIGHT]           = {.render = zmk_rgb_underglow_effect_knight, .reset = knight_reset},
+    [UNDERGLOW_EFFECT_STROBE]           = {.render = zmk_rgb_underglow_effect_strobe, .reset = strobe_reset},
+    [UNDERGLOW_EFFECT_TWINKLE]          = {.render = zmk_rgb_underglow_effect_twinkle, .reset = twinkle_reset},
+    [UNDERGLOW_EFFECT_SPIRAL]           = {.render = zmk_rgb_underglow_effect_spiral, .reset = spiral_reset},
+    [UNDERGLOW_EFFECT_GRADIENT]         = {.render = zmk_rgb_underglow_effect_gradient, .reset = gradient_reset},
+    [UNDERGLOW_EFFECT_SPARKLE]          = {.render = zmk_rgb_underglow_effect_sparkle, .reset = sparkle_init_all},
+    [UNDERGLOW_EFFECT_RIPPLE]           = {.render = zmk_rgb_underglow_effect_ripple,
+                                           .on_keypress = ripple_add_event,
+                                           .reset = ripple_reset},
+    [UNDERGLOW_EFFECT_TYPING_HEATMAP]   = {.render = zmk_rgb_underglow_effect_typing_heatmap,
+                                           .on_keypress = heatmap_add_event,
+                                           .reset = heatmap_reset},
+    [UNDERGLOW_EFFECT_REACTIVE_WIDE]    = {.render = zmk_rgb_underglow_effect_reactive_wide,
+                                           .on_keypress = reactive_wide_add_event,
+                                           .reset = reactive_wide_reset},
+    [UNDERGLOW_EFFECT_ALPHAS_MODS]      = {.render = zmk_rgb_underglow_effect_alphas_mods,
+                                           .reset = alphas_mods_reset},
+    [UNDERGLOW_EFFECT_GRADIENT_UP_DOWN] = {.render = zmk_rgb_underglow_effect_gradient_up_down,
+                                           .reset = gradient_up_down_reset},
+    [UNDERGLOW_EFFECT_SPLASH]           = {.render = zmk_rgb_underglow_effect_splash,
+                                           .on_keypress = splash_add_event,
+                                           .reset = splash_reset},
+    [UNDERGLOW_EFFECT_REACTIVE_CROSS]   = {.render = zmk_rgb_underglow_effect_reactive_cross,
+                                           .on_keypress = reactive_cross_add_event,
+                                           .reset = reactive_cross_reset},
+    [UNDERGLOW_EFFECT_DIGITAL_RAIN]     = {.render = zmk_rgb_underglow_effect_digital_rain,
+                                           .reset = digital_rain_reset},
 };
 
 /* ========================================================================= */
@@ -537,9 +554,13 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
     /* Run current effect renderer */
     eff->render();
 
-    /* Convert float pixels to LED strip format */
+    /* Convert float pixels to LED strip format.
+     * Apply pixel-lookup centrally so that ALL effects follow keyboard layout
+     * order automatically — individual effects no longer need to call
+     * effect_pixel_lookup() themselves. */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        rgb_float_to_led(&fx_pixels[i], &pixels[i]);
+        int key_pos = effect_pixel_lookup(i);
+        rgb_float_to_led(&fx_pixels[key_pos], &pixels[i]);
     }
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)

@@ -4,9 +4,8 @@
 static void reactive_add_event(uint32_t position) {
     if (position >= STRIP_NUM_PIXELS)
         return;
-    /* Convert key matrix position → LED strip index via inverse lookup */
-    uint32_t pixel = key_to_pixel[position];
-    reactive_brightness[pixel] = 255;
+    /* Position is already in keyboard layout space — no remapping needed */
+    reactive_brightness[position] = 255;
 }
 
 static void zmk_rgb_underglow_effect_reactive_enhanced(void) {

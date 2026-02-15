@@ -5,8 +5,7 @@ static void zmk_rgb_underglow_effect_spiral(void) {
     float brt = get_brightness_factor();
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int key_pos = effect_pixel_lookup(i);
-        float dist = fabsf((float)key_pos - spiral_center);
+        float dist = fabsf((float)i - spiral_center);
         if (dist > STRIP_NUM_PIXELS / 2)
             dist = STRIP_NUM_PIXELS - dist;
         float v = 1.0f - (dist / (STRIP_NUM_PIXELS / 2.0f));

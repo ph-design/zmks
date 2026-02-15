@@ -5,8 +5,7 @@ static void zmk_rgb_underglow_effect_swirl(void) {
     float brt = get_brightness_factor();
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int key_pos = effect_pixel_lookup(i);
-        float phase = (float)key_pos / (float)(STRIP_NUM_PIXELS);
+        float phase = (float)i / (float)(STRIP_NUM_PIXELS);
         float angle = phase * 4.0f * M_PI + swirl_offset;
         float v = (sinf(angle) + 1.0f) / 2.0f;
         struct color_hsl step = hsl;

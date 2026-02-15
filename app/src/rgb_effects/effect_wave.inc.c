@@ -8,8 +8,7 @@ static void zmk_rgb_underglow_effect_wave(void) {
     float inv_n = 1.0f / (float)STRIP_NUM_PIXELS;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int key_pos = effect_pixel_lookup(i);
-        float phase = (float)key_pos * inv_n;
+        float phase = (float)i * inv_n;
         /* Fast sine approximation: parabolic half-wave */
         float x = phase + wave_offset * (1.0f / (2.0f * M_PI));
         x = x - (int)x; /* fract */

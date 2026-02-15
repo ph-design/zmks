@@ -1,10 +1,4 @@
-static void reactive_add_event(uint32_t position) {
-    if (position >= STRIP_NUM_PIXELS)
-        return;
-    /* Convert key matrix position → LED strip index via inverse lookup */
-    uint32_t pixel = key_to_pixel[position];
-    reactive_brightness[pixel] = 255;
-}
+/* reactive_add_event() is defined in effect_reactive_enhanced.inc.c (shared) */
 
 static void reactive_reset(void) { memset(reactive_brightness, 0, sizeof(reactive_brightness)); }
 

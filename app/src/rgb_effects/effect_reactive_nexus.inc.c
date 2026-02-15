@@ -93,9 +93,8 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
         hsl_to_rgb_float(&shifted, &rgb);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            int key_pos = effect_pixel_lookup(j);
-            int jcol = key_pos % cols;
-            int jrow = key_pos / cols;
+            int jcol = j % cols;
+            int jrow = j / cols;
 
             /* Distance along the cross arms */
             int dcol = abs(jcol - rn_events[e].col);

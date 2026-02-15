@@ -77,9 +77,8 @@ static void zmk_rgb_underglow_effect_reactive_wide(void) {
         hsl_to_rgb_float(&shifted, &rgb);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            int key_pos = effect_pixel_lookup(j);
             /* Distance in normalized 0-255 space */
-            int dist = (int)(((float)abs(key_pos - (int)rw_events[e].pixel_id) /
+            int dist = (int)(((float)abs(j - (int)rw_events[e].pixel_id) /
                               (float)STRIP_NUM_PIXELS) * 255);
             if (dist > REACTIVE_WIDE_RADIUS)
                 continue;
