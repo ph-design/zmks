@@ -1,119 +1,100 @@
-/* TYPING HEATMAP effect: keys "heat up" on press and their heat spreads
- * to neighbouring LEDs.  Colour goes from off → blue → green → yellow → red
- * as temperature increases.  Temperature decays over time.
- *
- * Uses physical 2D coordinates for proper neighbour spreading when
- * led-positions are available (QMK-style).  Falls back to 1D strip
- * neighbours when not.
- *
- * Inspired by QMK RGB_MATRIX_TYPING_HEATMAP.
- */
+/* TYPING HEATMAP — ported from QMK RGB_MATRIX_TYPING_HEATMAP. */
 
-/* Per-pixel temperature: 0 = cold, 255 = hottest */
 static uint8_t heatmap_temp[STRIP_NUM_PIXELS];
+static uint32_t heatmap_decrease_timer;
+static bool heatmap_decrease_this_frame;
 
-/* Millisecond timestamp of last decay tick */
-static int64_t heatmap_last_decay_ms;
+#ifndef HEATMAP_INCREASE_STEP
+#define HEATMAP_INCREASE_STEP 32
+#endif
 
-#define HEATMAP_INCREASE_STEP 60    /* heat added on press */
-#define HEATMAP_SPREAD_RADIUS 0.15f /* normalised distance for heat spread */
-#define HEATMAP_SPREAD_AMOUNT 20    /* max heat per spread */
-#define HEATMAP_DECAY_INTERVAL 40   /* ms between decay ticks */
-#define HEATMAP_DECAY_AMOUNT 1      /* temperature lost per decay tick */
+#ifndef HEATMAP_DECREASE_DELAY_MS
+#define HEATMAP_DECREASE_DELAY_MS 50
+#endif
+
+#ifndef HEATMAP_SPREAD
+#define HEATMAP_SPREAD 0.28f
+#endif
+
+#ifndef HEATMAP_AREA_LIMIT
+#define HEATMAP_AREA_LIMIT 24
+#endif
 
 static void heatmap_add_event(uint32_t position) {
     if (position >= STRIP_NUM_PIXELS)
         return;
 
-    /* Heat all LEDs mapped to this key (multi-LED support) */
+    uint8_t pressed_led = key_to_pixel[position];
+    int t = (int)heatmap_temp[pressed_led] + HEATMAP_INCREASE_STEP;
+    heatmap_temp[pressed_led] = (uint8_t)(t > 255 ? 255 : t);
+
+    float src_x = key_src_x(position);
+    float src_y = key_src_y(position);
+
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        if ((uint32_t)effect_pixel_lookup(i) == position) {
-            int t = (int)heatmap_temp[i] + HEATMAP_INCREASE_STEP;
-            heatmap_temp[i] = (uint8_t)(t > 255 ? 255 : t);
-        }
-    }
+        if (i == pressed_led)
+            continue;
 
-    /* Spread heat to nearby LEDs using 2D coordinates */
-    float sx = key_src_x(position);
-    float sy = key_src_y(position);
-
-    for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-        if ((uint32_t)effect_pixel_lookup(j) == position)
-            continue; /* skip the key itself */
-
-        float dx = led_norm_x(j) - sx;
-        float dy = led_norm_y(j) - sy;
+        float dx = led_norm_x(i) - src_x;
+        float dy = led_norm_y(i) - src_y;
         float dist = sqrtf(dx * dx + dy * dy);
 
-        if (dist < HEATMAP_SPREAD_RADIUS) {
-            int amount = (int)(HEATMAP_SPREAD_AMOUNT * (1.0f - dist / HEATMAP_SPREAD_RADIUS));
+        if (dist <= HEATMAP_SPREAD) {
+            uint8_t amount = (uint8_t)((1.0f - dist / HEATMAP_SPREAD) * HEATMAP_AREA_LIMIT);
+            if (amount > HEATMAP_AREA_LIMIT)
+                amount = HEATMAP_AREA_LIMIT;
             if (amount > 0) {
-                int v = (int)heatmap_temp[j] + amount;
-                heatmap_temp[j] = (uint8_t)(v > 255 ? 255 : v);
+                int v = (int)heatmap_temp[i] + amount;
+                heatmap_temp[i] = (uint8_t)(v > 255 ? 255 : v);
             }
         }
     }
 }
 
 static void heatmap_reset(void) {
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++)
-        heatmap_temp[i] = 0;
-    heatmap_last_decay_ms = k_uptime_get();
-}
-
-/* Map temperature 0-255 to HSL hue (240 blue → 0 red) */
-static void heatmap_temp_to_rgb(uint8_t temp, struct color_rgb_float *out, float brt) {
-    if (temp == 0) {
-        *out = (struct color_rgb_float){0, 0, 0};
-        return;
-    }
-
-    /* Map: 0→hue 240(blue), 128→hue 60(yellow), 255→hue 0(red) */
-    float t = (float)temp / 255.0f;
-    uint16_t hue;
-    if (t < 0.5f) {
-        /* Blue (240) → Green (120) */
-        hue = 240 - (uint16_t)(t * 2.0f * 120.0f);
-    } else {
-        /* Green (120) → Red (0) */
-        hue = 120 - (uint16_t)((t - 0.5f) * 2.0f * 120.0f);
-    }
-
-    struct color_hsl hsl = {hue, 100, 50};
-    struct color_rgb_float rgb;
-    hsl_to_rgb_float(&hsl, &rgb);
-
-    /* Intensity scales with temperature */
-    float intensity = t * brt;
-    out->r = rgb.r * intensity;
-    out->g = rgb.g * intensity;
-    out->b = rgb.b * intensity;
+    memset(heatmap_temp, 0, sizeof(heatmap_temp));
+    heatmap_decrease_timer = (uint32_t)k_uptime_get();
 }
 
 static void zmk_rgb_underglow_effect_typing_heatmap(void) {
     float brt = get_brightness_factor();
+    float user_sat = (float)state.color.s / 100.0f;
 
-    /* Time-based decay */
-    int64_t now = k_uptime_get();
-    int64_t elapsed = now - heatmap_last_decay_ms;
-    /* Speed affects decay rate */
-    int decay_interval =
-        HEATMAP_DECAY_INTERVAL / (state.animation_speed > 0 ? state.animation_speed : 1);
-    if (decay_interval < 10)
-        decay_interval = 10;
+    uint32_t now = (uint32_t)k_uptime_get();
+    int delay_ms =
+        HEATMAP_DECREASE_DELAY_MS / (state.animation_speed > 0 ? state.animation_speed : 1);
+    if (delay_ms < 5)
+        delay_ms = 5;
 
-    if (elapsed >= decay_interval) {
-        int ticks = (int)(elapsed / decay_interval);
-        int total_decay = ticks * HEATMAP_DECAY_AMOUNT;
-        for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-            int v = (int)heatmap_temp[i] - total_decay;
-            heatmap_temp[i] = (uint8_t)(v < 0 ? 0 : v);
-        }
-        heatmap_last_decay_ms = now;
-    }
+    heatmap_decrease_this_frame = ((now - heatmap_decrease_timer) >= (uint32_t)delay_ms);
+    if (heatmap_decrease_this_frame)
+        heatmap_decrease_timer = now;
 
-    /* Render */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        heatmap_temp_to_rgb(heatmap_temp[i], &fx_pixels[i], brt);
+        uint8_t val = heatmap_temp[i];
+
+        if (heatmap_decrease_this_frame && val > 0)
+            heatmap_temp[i] = --val;
+
+        if (val == 0) {
+            fx_pixels[i] = (struct color_rgb_float){0, 0, 0};
+            continue;
+        }
+
+        /* QMK hue: 170(blue)→85(green)→0(red), converted to 0-360 */
+        uint8_t qmk_hue = 170 - (val > 85 ? val - 85 : 0);
+        uint16_t hue_360 = (uint16_t)qmk_hue * 360 / 256;
+
+        /* QMK brightness: ramps from 0, saturates at val≥85 */
+        int raw_v = (val > 170 ? 255 : (int)val * 3);
+        float led_brt = ((float)raw_v / 255.0f) * brt;
+
+        struct color_hsl hsl = {.h = hue_360, .s = (uint8_t)(user_sat * 100.0f), .l = 50};
+        struct color_rgb_float rgb;
+        hsl_to_rgb_float(&hsl, &rgb);
+
+        fx_pixels[i].r = rgb.r * led_brt;
+        fx_pixels[i].g = rgb.g * led_brt;
+        fx_pixels[i].b = rgb.b * led_brt;
     }
 }
