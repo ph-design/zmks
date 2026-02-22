@@ -4,6 +4,8 @@ manifest:
       url-base: https://github.com/zephyrproject-rtos
     - name: zmkfirmware
       url-base: https://github.com/zmkfirmware
+    - name: ph-design
+      url-base: https://github.com/ph-design
   projects:
     - name: zephyr
       remote: zmkfirmware
@@ -34,8 +36,8 @@ manifest:
       path: modules/lib/nanopb
       remote: zmkfirmware
     - name: zmk-studio-messages
-      revision: 6cb4c283e76209d59c45fbcb218800cd19e9339d
+      revision: v0.3_lts
       path: modules/msgs/zmk-studio-messages
-      remote: zmkfirmware
+      remote: ph-design
   self:
     west-commands: scripts/west-commands.yml
