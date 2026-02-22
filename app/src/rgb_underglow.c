@@ -315,6 +315,9 @@ static inline float hue_wrap(float h) {
 /*  Per-LED Physical Coordinates (normalised 0-255, indexed by strip pos)    */
 /* ========================================================================= */
 
+/* Inverse pixel lookup: key matrix position → LED strip index.
+ * Built at init from the pixel-lookup / transform DT property. */
+static uint8_t key_to_pixel[STRIP_NUM_PIXELS];
 static uint8_t led_pos_x[STRIP_NUM_PIXELS];
 static uint8_t led_pos_y[STRIP_NUM_PIXELS];
 static bool positions_available = false;
@@ -413,10 +416,6 @@ static struct k_mutex ripple_mutex;
 
 /* Per-pixel fade brightness: 255 = just pressed, 0 = off */
 static uint8_t reactive_brightness[STRIP_NUM_PIXELS];
-
-/* Inverse pixel lookup: key matrix position → LED strip index.
- * Built at init from the pixel-lookup DT property. */
-static uint8_t key_to_pixel[STRIP_NUM_PIXELS];
 
 /* ========================================================================= */
 /*  Gradient & Solid Effect State                                            */
