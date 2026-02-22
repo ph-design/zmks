@@ -14,35 +14,18 @@
 
 static float gradient_ud_offset = 0.0f;
 
-/* Grid helpers (local to this effect) */
-static int gud_cols(void) {
-    if (STRIP_NUM_PIXELS >= 120) return STRIP_NUM_PIXELS / 5;
-    if (STRIP_NUM_PIXELS >= 48)  return STRIP_NUM_PIXELS / 4;
-    if (STRIP_NUM_PIXELS >= 30)  return STRIP_NUM_PIXELS / 3;
-    return STRIP_NUM_PIXELS;
-}
-
-static void gradient_up_down_reset(void) {
-    gradient_ud_offset = 0.0f;
-}
+static void gradient_up_down_reset(void) { gradient_ud_offset = 0.0f; }
 
 static void zmk_rgb_underglow_effect_gradient_up_down(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
 
-    int cols = gud_cols();
-    int rows = (cols > 0) ? ((STRIP_NUM_PIXELS + cols - 1) / cols) : 1;
-    if (rows < 1) rows = 1;
-
-    /* Pre-compute one RGB per row (avoid redundant HSL→RGB for every pixel) */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int row = i / cols;
+        /* Use normalised Y position (0-1) for vertical gradient */
+        float row_norm = led_norm_y(i);
 
-        /* Spread 360° across the rows, offset by base hue and scroll */
-        float hue = hue_wrap(
-            (float)state.color.h +
-            gradient_ud_offset +
-            (float)row / (float)rows * 360.0f);
+        /* Spread 360 degrees across vertical span */
+        float hue = hue_wrap((float)state.color.h + gradient_ud_offset + row_norm * 360.0f);
 
         struct color_hsl pixel_hsl = {(uint16_t)hue, hsl.s, hsl.l};
         struct color_rgb_float rgb;

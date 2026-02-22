@@ -25,6 +25,12 @@ const int rgb_pixel_lookup(int idx);
 const int zmk_rgbmap_id(uint8_t layer);
 const int zmk_rgbmap_fade_delay(uint8_t layer);
 
+/* Coordinate-based RGB support (requires zmk,rgb-matrix-transform with led-positions) */
+bool rgb_has_led_positions(void);
+int rgb_led_positions_count(void);
+int rgb_led_position_raw_x(int binding_idx);
+int rgb_led_position_raw_y(int binding_idx);
+
 const struct zmk_behavior_binding *rgb_underglow_get_bindings(uint8_t layer);
 
 uint8_t rgb_underglow_top_layer_with_state(uint32_t state_to_test);

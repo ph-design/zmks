@@ -1,0 +1,28 @@
+description: |
+  RGB Matrix Transform node.
+  Provides strip-to-binding mapping and optional per-binding physical
+  coordinates for coordinate-based RGB effects (QMK-style).
+
+  map[strip_idx] = binding_idx
+  led-positions[binding_idx] = (x, y) interleaved
+
+compatible: "zmk,rgb-matrix-transform"
+
+properties:
+  map:
+    type: array
+    required: true
+    description: |
+      Mapping array: map[strip_idx] = binding_idx.
+      Array length must equal the LED strip chain-length.
+      Multiple entries may share the same value (multi-LED per key).
+
+  led-positions:
+    type: array
+    required: false
+    description: |
+      Physical coordinates (x, y) for each binding, in binding order.
+      Array length = num_bindings * 2 (interleaved x, y pairs).
+      Units are arbitrary; values are normalised to 0-255 at runtime.
+      Required for coordinate-based spatial effects (rainbow wave,
+      reactive wide, ripple, heatmap, etc.).

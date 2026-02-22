@@ -6,7 +6,20 @@ compatible: "zmk,underglow-layer"
 properties:
   pixel-lookup:
     type: array
-    required: true
+    required: false
+    description: |
+      Legacy mapping array: pixel-lookup[strip_idx] = binding_idx.
+      Deprecated in favour of the 'transform' phandle.
+      One of pixel-lookup or transform must be provided.
+
+  transform:
+    type: phandle
+    required: false
+    description: |
+      Reference to a zmk,rgb-matrix-transform node that provides
+      strip-to-binding mapping (map) and optional per-LED physical
+      coordinates (led-positions).  When present, pixel-lookup is
+      ignored.
 
 child-binding:
   description: "A layer to be used in a rgbmap"

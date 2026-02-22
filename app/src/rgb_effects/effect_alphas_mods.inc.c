@@ -2,12 +2,11 @@
  * alpha keys use the user-selected hue.  The secondary hue offset is
  * controlled by animation_speed (higher speed → larger hue gap).
  *
- * Inspired by QMK RGB_MATRIX_ALPHAS_MODS.
+ * Uses physical coordinates when available: LEDs near the left/right edges
+ * (X < 0.12 or X > 0.88) are treated as modifiers.  Falls back to
+ * index-based heuristic when coordinates are unavailable.
  *
- * Since ZMK lacks per-key flags, we use a simple heuristic: keys in the
- * first and last two physical positions of each "row-equivalent slice"
- * are treated as modifiers.  This gives a visually correct result on
- * most ortho/staggered boards without any extra configuration.
+ * Inspired by QMK RGB_MATRIX_ALPHAS_MODS.
  */
 
 static void zmk_rgb_underglow_effect_alphas_mods(void) {
@@ -21,24 +20,19 @@ static void zmk_rgb_underglow_effect_alphas_mods(void) {
     hsl_to_rgb_float(&hsl_mod, &rgb_mod);
 
     float brt = get_brightness_factor();
-    rgb_alpha.r *= brt; rgb_alpha.g *= brt; rgb_alpha.b *= brt;
-    rgb_mod.r   *= brt; rgb_mod.g   *= brt; rgb_mod.b   *= brt;
-
-    /* Approximate row length for modifier detection */
-    int row_len = STRIP_NUM_PIXELS;
-    if (row_len >= 120)      row_len = row_len / 5;  /* 5-row board */
-    else if (row_len >= 48)  row_len = row_len / 4;  /* 4-row board */
-    else if (row_len >= 30)  row_len = row_len / 3;  /* 3-row board */
-    /* else treat entire strip as one row */
+    rgb_alpha.r *= brt;
+    rgb_alpha.g *= brt;
+    rgb_alpha.b *= brt;
+    rgb_mod.r *= brt;
+    rgb_mod.g *= brt;
+    rgb_mod.b *= brt;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        int col_in_row = i % row_len;
-        /* First 2 and last 2 columns → "modifier" */
-        bool is_mod = (col_in_row < 2) || (col_in_row >= row_len - 2);
+        float x = led_norm_x(i);
+        /* Edge keys (left/right ~12%) → "modifier" */
+        bool is_mod = (x < 0.12f) || (x > 0.88f);
         fx_pixels[i] = is_mod ? rgb_mod : rgb_alpha;
     }
 }
 
-static void alphas_mods_reset(void) {
-    /* Static effect — nothing to reset */
-}
+static void alphas_mods_reset(void) { /* Static effect — nothing to reset */ }

@@ -1,14 +1,18 @@
-/* SPIRAL OUT effect (center moves outward) */
-static float spiral_out_center = 0.0f;
+/* SPIRAL OUT effect (center moves outward) — uses 2D physical coords */
+static float spiral_out_phase = 0.0f;
 static void zmk_rgb_underglow_effect_spiral_out(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
 
+    float cx = spiral_out_phase; /* move outward from left */
+    float cy = 0.5f;
+
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        float dist = fabsf((float)i - spiral_out_center);
-        if (dist > STRIP_NUM_PIXELS / 2)
-            dist = STRIP_NUM_PIXELS - dist;
-        float v = dist / (STRIP_NUM_PIXELS / 2.0f);
+        float dx = led_norm_x(i) - cx;
+        float dy = led_norm_y(i) - cy;
+        float dist = sqrtf(dx * dx + dy * dy);
+        /* Inverse: farther from center = brighter */
+        float v = dist * 2.0f;
         v = CLAMP(v, 0.0f, 1.0f);
         struct color_rgb_float rgb;
         hsl_to_rgb_float(&hsl, &rgb);
@@ -18,11 +22,9 @@ static void zmk_rgb_underglow_effect_spiral_out(void) {
         fx_pixels[i] = rgb;
     }
 
-    spiral_out_center += (float)state.animation_speed * 0.4f;
-    if (spiral_out_center >= STRIP_NUM_PIXELS)
-        spiral_out_center -= STRIP_NUM_PIXELS;
+    spiral_out_phase += (float)state.animation_speed * 0.006f;
+    if (spiral_out_phase >= 1.0f)
+        spiral_out_phase -= 1.0f;
 }
 
-static void spiral_out_reset(void) {
-    spiral_out_center = 0.0f;
-}
+static void spiral_out_reset(void) { spiral_out_phase = 0.0f; }

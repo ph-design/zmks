@@ -1,4 +1,4 @@
-/* LINEAR GRADIENT effect (moved out of rgb_underglow.c) */
+/* LINEAR GRADIENT effect — uses physical X coordinate for position */
 static void zmk_rgb_underglow_effect_gradient(void) {
     struct color_hsl hsl1 = hsb_to_hsl(state.color);
     struct color_hsl hsl2 = hsl1;
@@ -12,15 +12,16 @@ static void zmk_rgb_underglow_effect_gradient(void) {
     hsl_to_rgb_float(&hsl3, &rgb3);
 
     float brt = get_brightness_factor();
-    float gradient_width = (float)STRIP_NUM_PIXELS;
     struct color_rgb_float colors[3] = {rgb1, rgb2, rgb3};
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        float distance = float_mod(gradient_width + (float)i - gradient_offset, gradient_width);
+        /* Use normalised X position (0-1) mapped to gradient space */
+        float pos = led_norm_x(i); /* 0-1 */
+        float distance = float_mod(1.0f + pos - gradient_offset, 1.0f);
         if (distance < 0)
-            distance += gradient_width;
+            distance += 1.0f;
 
-        float segment_width = gradient_width / 3.0f;
+        float segment_width = 1.0f / 3.0f;
         int from_idx = (int)(distance / segment_width);
         if (from_idx > 2)
             from_idx = 2;
@@ -37,13 +38,11 @@ static void zmk_rgb_underglow_effect_gradient(void) {
         fx_pixels[i] = result;
     }
 
-    /* Scroll */
-    gradient_offset += (float)state.animation_speed * 0.15f;
-    if (gradient_offset >= gradient_width) {
-        gradient_offset -= gradient_width;
+    /* Scroll (normalised 0-1 range) */
+    gradient_offset += (float)state.animation_speed * 0.002f;
+    if (gradient_offset >= 1.0f) {
+        gradient_offset -= 1.0f;
     }
 }
 
-static void gradient_reset(void) {
-    gradient_offset = 0.0f;
-}
+static void gradient_reset(void) { gradient_offset = 0.0f; }

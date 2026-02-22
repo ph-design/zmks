@@ -1,47 +1,34 @@
 /* REACTIVE NEXUS effect: hue & value pulse outward along the same column
  * and row of the pressed key, forming a cross/nexus pattern.
  *
+ * Uses physical 2D coordinates for proper cross alignment when led-positions
+ * are available.  Falls back to grid approximation when not.
+ *
  * Inspired by QMK RGB_MATRIX_SOLID_REACTIVE_MULTINEXUS.
  */
 
 #define REACTIVE_NEXUS_MAX_EVENTS 16
-#define REACTIVE_NEXUS_ARM_WIDTH  30  /* cross-arm width in 0-255 space */
+#define NEXUS_ARM_TOLERANCE 0.08f /* cross-arm width in normalised space */
 
 struct reactive_nexus_event {
-    int col;             /* column of source key (0-based) */
-    int row;             /* row of source key (0-based) */
+    float src_x; /* source key X (normalised 0-1) */
+    float src_y; /* source key Y (normalised 0-1) */
     uint8_t age;
     bool active;
 };
 
 static struct reactive_nexus_event rn_events[REACTIVE_NEXUS_MAX_EVENTS];
 
-/* Approximate grid dimensions deduced from pixel count */
-static int nexus_cols(void) {
-    if (STRIP_NUM_PIXELS >= 120) return STRIP_NUM_PIXELS / 5;
-    if (STRIP_NUM_PIXELS >= 48)  return STRIP_NUM_PIXELS / 4;
-    if (STRIP_NUM_PIXELS >= 30)  return STRIP_NUM_PIXELS / 3;
-    return STRIP_NUM_PIXELS;
-}
-
-static int nexus_rows(void) {
-    int c = nexus_cols();
-    return (c > 0) ? ((STRIP_NUM_PIXELS + c - 1) / c) : 1;
-}
-
 static void reactive_nexus_add_event(uint32_t position) {
-    if (position >= STRIP_NUM_PIXELS)
-        return;
-    int cols = nexus_cols();
-    int col = (int)position % cols;
-    int row = (int)position / cols;
+    float sx = key_src_x(position);
+    float sy = key_src_y(position);
 
     int oldest = 0;
     uint8_t oldest_age = 0;
     for (int i = 0; i < REACTIVE_NEXUS_MAX_EVENTS; i++) {
         if (!rn_events[i].active) {
-            rn_events[i].col = col;
-            rn_events[i].row = row;
+            rn_events[i].src_x = sx;
+            rn_events[i].src_y = sy;
             rn_events[i].age = 0;
             rn_events[i].active = true;
             return;
@@ -51,8 +38,8 @@ static void reactive_nexus_add_event(uint32_t position) {
             oldest = i;
         }
     }
-    rn_events[oldest].col = col;
-    rn_events[oldest].row = row;
+    rn_events[oldest].src_x = sx;
+    rn_events[oldest].src_y = sy;
     rn_events[oldest].age = 0;
     rn_events[oldest].active = true;
 }
@@ -67,10 +54,8 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
     float brt = get_brightness_factor();
 
     uint8_t max_age = 100 / (state.animation_speed > 0 ? state.animation_speed : 1);
-    if (max_age < 8) max_age = 8;
-
-    int cols = nexus_cols();
-    int rows = nexus_rows();
+    if (max_age < 8)
+        max_age = 8;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         fx_pixels[i] = (struct color_rgb_float){0, 0, 0};
@@ -92,31 +77,32 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
         struct color_rgb_float rgb;
         hsl_to_rgb_float(&shifted, &rgb);
 
+        /* Cross-arm reach expands as the event ages */
+        float reach = (1.0f - age_factor) * 1.0f; /* max reach = full keyboard */
+
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            int jcol = j % cols;
-            int jrow = j / cols;
+            float jx = led_norm_x(j);
+            float jy = led_norm_y(j);
+            float dx = fabsf(jx - rn_events[e].src_x);
+            float dy = fabsf(jy - rn_events[e].src_y);
 
-            /* Distance along the cross arms */
-            int dcol = abs(jcol - rn_events[e].col);
-            int drow = abs(jrow - rn_events[e].row);
-
-            /* Nexus cross: contribute if on same row OR same column */
             float spatial = 0.0f;
-            if (jrow == rn_events[e].row && cols > 0) {
-                /* Horizontal arm: expand outward with age */
-                float reach = (1.0f - age_factor) * (float)cols;
-                if ((float)dcol <= reach + 1.0f) {
-                    float arm = 1.0f - (float)dcol / (reach + 1.0f);
-                    if (arm > spatial) spatial = arm;
-                }
+
+            /* Horizontal arm: LED is on same row (close Y) */
+            if (dy < NEXUS_ARM_TOLERANCE && dx <= reach + 0.01f) {
+                float arm = 1.0f - dx / (reach + 0.01f);
+                float y_factor = 1.0f - dy / NEXUS_ARM_TOLERANCE;
+                arm *= y_factor;
+                if (arm > spatial)
+                    spatial = arm;
             }
-            if (jcol == rn_events[e].col && rows > 0) {
-                /* Vertical arm */
-                float reach = (1.0f - age_factor) * (float)rows;
-                if ((float)drow <= reach + 1.0f) {
-                    float arm = 1.0f - (float)drow / (reach + 1.0f);
-                    if (arm > spatial) spatial = arm;
-                }
+            /* Vertical arm: LED is on same column (close X) */
+            if (dx < NEXUS_ARM_TOLERANCE && dy <= reach + 0.01f) {
+                float arm = 1.0f - dy / (reach + 0.01f);
+                float x_factor = 1.0f - dx / NEXUS_ARM_TOLERANCE;
+                arm *= x_factor;
+                if (arm > spatial)
+                    spatial = arm;
             }
 
             if (spatial <= 0)
@@ -129,9 +115,12 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
                 .b = rgb.b * intensity,
             };
 
-            if (c.r > fx_pixels[j].r) fx_pixels[j].r = c.r;
-            if (c.g > fx_pixels[j].g) fx_pixels[j].g = c.g;
-            if (c.b > fx_pixels[j].b) fx_pixels[j].b = c.b;
+            if (c.r > fx_pixels[j].r)
+                fx_pixels[j].r = c.r;
+            if (c.g > fx_pixels[j].g)
+                fx_pixels[j].g = c.g;
+            if (c.b > fx_pixels[j].b)
+                fx_pixels[j].b = c.b;
         }
 
         rn_events[e].age++;

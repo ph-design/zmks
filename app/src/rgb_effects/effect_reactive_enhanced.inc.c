@@ -1,11 +1,13 @@
 /* REACTIVE ENHANCED: variant of reactive with larger fade and color interpolation */
 
-/* Keypress handler: light up the LED at the pressed key position */
+/* Keypress handler: light up ALL LEDs mapped to the pressed key position.
+ * Supports multi-LED sharing (multiple strip LEDs → same binding). */
 static void reactive_add_event(uint32_t position) {
-    if (position >= STRIP_NUM_PIXELS)
-        return;
-    /* Position is already in keyboard layout space — no remapping needed */
-    reactive_brightness[position] = 255;
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        if ((uint32_t)effect_pixel_lookup(i) == position) {
+            reactive_brightness[i] = 255;
+        }
+    }
 }
 
 static void zmk_rgb_underglow_effect_reactive_enhanced(void) {
@@ -16,7 +18,8 @@ static void zmk_rgb_underglow_effect_reactive_enhanced(void) {
 
     /* Decay rate scales with animation speed for responsiveness */
     uint8_t decay = 2 + state.animation_speed;
-    if (decay > 12) decay = 12;
+    if (decay > 12)
+        decay = 12;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         uint8_t b = reactive_brightness[i];
@@ -29,10 +32,7 @@ static void zmk_rgb_underglow_effect_reactive_enhanced(void) {
             float f = brt * factor;
 
             fx_pixels[i] = (struct color_rgb_float){
-                .r = base_rgb.r * f,
-                .g = base_rgb.g * f,
-                .b = base_rgb.b * f
-            };
+                .r = base_rgb.r * f, .g = base_rgb.g * f, .b = base_rgb.b * f};
 
             /* decay */
             if (reactive_brightness[i] > decay)

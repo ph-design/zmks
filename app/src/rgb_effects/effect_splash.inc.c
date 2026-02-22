@@ -14,13 +14,13 @@
  * QMK equivalent: SPLASH / MULTISPLASH
  */
 
-#define SPLASH_MAX_EVENTS  16
-#define SPLASH_RING_WIDTH  45   /* width of each ring in 0-255 distance space */
+#define SPLASH_MAX_EVENTS 16
+#define SPLASH_RING_WIDTH 45 /* width of each ring in 0-255 distance space */
 
 struct splash_event {
-    uint32_t pixel_id;  /* origin position (matrix index) */
-    uint8_t  age;       /* frames since event fired */
-    bool     active;
+    uint32_t pixel_id; /* origin position (matrix index) */
+    uint8_t age;       /* frames since event fired */
+    bool active;
 };
 
 static struct splash_event splash_events[SPLASH_MAX_EVENTS];
@@ -71,12 +71,6 @@ static void zmk_rgb_underglow_effect_splash(void) {
         fx_pixels[i] = (struct color_rgb_float){0, 0, 0};
     }
 
-    /* Ring expansion speed in 0-255 distance space per frame.
-     * At max_age frames the ring should roughly cover the whole keyboard
-     * (distance 255).  So: expansion ≈ 255 / max_age.
-     */
-    float expansion_per_frame = 255.0f / (float)max_age;
-
     for (int e = 0; e < SPLASH_MAX_EVENTS; e++) {
         if (!splash_events[e].active)
             continue;
@@ -91,27 +85,29 @@ static void zmk_rgb_underglow_effect_splash(void) {
         float age_fade = 1.0f - age_norm;
         age_fade *= age_fade; /* Quadratic for smoother tail */
 
-        /* Current ring radius in distance space */
-        float ring_center = (float)splash_events[e].age * expansion_per_frame;
+        /* Current ring radius in normalised distance space */
+        float ring_center_norm = age_norm; /* 0→1 over lifetime */
+
+        /* Source coordinates */
+        float sx = key_src_x(splash_events[e].pixel_id);
+        float sy = key_src_y(splash_events[e].pixel_id);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            /* Distance from splash origin (normalised to 0-255) */
-            float raw_dist = fabsf((float)j - (float)splash_events[e].pixel_id);
-            float pixel_dist = (raw_dist / (float)STRIP_NUM_PIXELS) * 255.0f;
+            /* 2D Euclidean distance from splash origin */
+            float dx = led_norm_x(j) - sx;
+            float dy = led_norm_y(j) - sy;
+            float pixel_dist = sqrtf(dx * dx + dy * dy);
 
             /* How close is this pixel to the expanding ring edge? */
-            float diff = fabsf(pixel_dist - ring_center);
-            if (diff >= (float)SPLASH_RING_WIDTH)
+            float ring_width_norm = (float)SPLASH_RING_WIDTH / 255.0f;
+            float diff = fabsf(pixel_dist - ring_center_norm);
+            if (diff >= ring_width_norm)
                 continue;
 
-            float ring_factor = 1.0f - diff / (float)SPLASH_RING_WIDTH;
+            float ring_factor = 1.0f - diff / ring_width_norm;
 
-            /* Rainbow hue based on normalised distance from origin.
-             * Closer pixels = base hue, further = shifted hue.
-             * Spread the full 360° across the keyboard width.
-             */
-            float hue = hue_wrap(
-                (float)state.color.h + pixel_dist * (360.0f / 255.0f));
+            /* Rainbow hue based on normalised distance from origin */
+            float hue = hue_wrap((float)state.color.h + pixel_dist * 360.0f);
 
             struct color_hsl pixel_hsl = {(uint16_t)hue, hsl.s, hsl.l};
             struct color_rgb_float rgb;
@@ -125,9 +121,12 @@ static void zmk_rgb_underglow_effect_splash(void) {
             };
 
             /* Lighten blend */
-            if (c.r > fx_pixels[j].r) fx_pixels[j].r = c.r;
-            if (c.g > fx_pixels[j].g) fx_pixels[j].g = c.g;
-            if (c.b > fx_pixels[j].b) fx_pixels[j].b = c.b;
+            if (c.r > fx_pixels[j].r)
+                fx_pixels[j].r = c.r;
+            if (c.g > fx_pixels[j].g)
+                fx_pixels[j].g = c.g;
+            if (c.b > fx_pixels[j].b)
+                fx_pixels[j].b = c.b;
         }
 
         splash_events[e].age++;

@@ -1,11 +1,11 @@
-/* SWIRL effect (phase-shifted wave) */
+/* SWIRL effect (phase-shifted wave) — uses physical X position */
 static float swirl_offset = 0.0f;
 static void zmk_rgb_underglow_effect_swirl(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        float phase = (float)i / (float)(STRIP_NUM_PIXELS);
+        float phase = led_norm_x(i); /* 0-1 normalised X */
         float angle = phase * 4.0f * M_PI + swirl_offset;
         float v = (sinf(angle) + 1.0f) / 2.0f;
         struct color_hsl step = hsl;
@@ -22,6 +22,4 @@ static void zmk_rgb_underglow_effect_swirl(void) {
         swirl_offset -= 2.0f * M_PI;
 }
 
-static void swirl_reset(void) {
-    swirl_offset = 0.0f;
-}
+static void swirl_reset(void) { swirl_offset = 0.0f; }

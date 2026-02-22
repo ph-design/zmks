@@ -1,4 +1,4 @@
-/* RIPPLE effect: expanding rings from key press positions */
+/* RIPPLE effect: expanding rings from key press positions — uses 2D coords */
 
 static void ripple_add_event(uint32_t position) {
     if (position >= STRIP_NUM_PIXELS)
@@ -54,15 +54,25 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     }
     k_mutex_unlock(&ripple_mutex);
 
+    /* Pre-compute source coordinates for each event */
+    float ev_src_x[RIPPLE_MAX_EVENTS];
+    float ev_src_y[RIPPLE_MAX_EVENTS];
+    for (int i = 0; i < count; i++) {
+        ev_src_x[i] = key_src_x(local_events[i].pixel_id);
+        ev_src_y[i] = key_src_y(local_events[i].pixel_id);
+    }
+
     /* Render each active ripple event (no lock held) */
     for (int i = 0; i < count; i++) {
         struct ripple_event *ev = &local_events[i];
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
-            int pixel_dist =
-                (int)(((float)abs(j - (int)ev->pixel_id) / (float)STRIP_NUM_PIXELS) * 255);
+            /* 2D Euclidean distance, normalised to 0-255 range */
+            float dx = led_norm_x(j) - ev_src_x[i];
+            float dy = led_norm_y(j) - ev_src_y[i];
+            float pixel_dist = sqrtf(dx * dx + dy * dy) * 255.0f;
 
-            int diff = abs(pixel_dist - (int)ev->distance);
+            int diff = (int)fabsf(pixel_dist - (float)ev->distance);
             if (diff < RIPPLE_WIDTH) {
                 float intensity = (1.0f - (float)diff / (float)RIPPLE_WIDTH) * brt;
 

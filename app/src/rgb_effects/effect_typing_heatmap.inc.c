@@ -2,6 +2,10 @@
  * to neighbouring LEDs.  Colour goes from off → blue → green → yellow → red
  * as temperature increases.  Temperature decays over time.
  *
+ * Uses physical 2D coordinates for proper neighbour spreading when
+ * led-positions are available (QMK-style).  Falls back to 1D strip
+ * neighbours when not.
+ *
  * Inspired by QMK RGB_MATRIX_TYPING_HEATMAP.
  */
 
@@ -11,34 +15,42 @@ static uint8_t heatmap_temp[STRIP_NUM_PIXELS];
 /* Millisecond timestamp of last decay tick */
 static int64_t heatmap_last_decay_ms;
 
-#define HEATMAP_INCREASE_STEP  60   /* heat added on press */
-#define HEATMAP_SPREAD         3    /* how many neighbours get heated */
-#define HEATMAP_SPREAD_AMOUNT  20   /* heat per spread step */
+#define HEATMAP_INCREASE_STEP 60    /* heat added on press */
+#define HEATMAP_SPREAD_RADIUS 0.15f /* normalised distance for heat spread */
+#define HEATMAP_SPREAD_AMOUNT 20    /* max heat per spread */
 #define HEATMAP_DECAY_INTERVAL 40   /* ms between decay ticks */
-#define HEATMAP_DECAY_AMOUNT   1    /* temperature lost per decay tick */
+#define HEATMAP_DECAY_AMOUNT 1      /* temperature lost per decay tick */
 
 static void heatmap_add_event(uint32_t position) {
     if (position >= STRIP_NUM_PIXELS)
         return;
 
-    /* Heat the pressed key */
-    int t = (int)heatmap_temp[position] + HEATMAP_INCREASE_STEP;
-    heatmap_temp[position] = (uint8_t)(t > 255 ? 255 : t);
-
-    /* Spread heat to neighbours */
-    for (int d = 1; d <= HEATMAP_SPREAD; d++) {
-        int amount = HEATMAP_SPREAD_AMOUNT / d;
-        if (amount < 1) break;
-
-        int left = (int)position - d;
-        int right = (int)position + d;
-        if (left >= 0) {
-            int v = (int)heatmap_temp[left] + amount;
-            heatmap_temp[left] = (uint8_t)(v > 255 ? 255 : v);
+    /* Heat all LEDs mapped to this key (multi-LED support) */
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        if ((uint32_t)effect_pixel_lookup(i) == position) {
+            int t = (int)heatmap_temp[i] + HEATMAP_INCREASE_STEP;
+            heatmap_temp[i] = (uint8_t)(t > 255 ? 255 : t);
         }
-        if (right < STRIP_NUM_PIXELS) {
-            int v = (int)heatmap_temp[right] + amount;
-            heatmap_temp[right] = (uint8_t)(v > 255 ? 255 : v);
+    }
+
+    /* Spread heat to nearby LEDs using 2D coordinates */
+    float sx = key_src_x(position);
+    float sy = key_src_y(position);
+
+    for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
+        if ((uint32_t)effect_pixel_lookup(j) == position)
+            continue; /* skip the key itself */
+
+        float dx = led_norm_x(j) - sx;
+        float dy = led_norm_y(j) - sy;
+        float dist = sqrtf(dx * dx + dy * dy);
+
+        if (dist < HEATMAP_SPREAD_RADIUS) {
+            int amount = (int)(HEATMAP_SPREAD_AMOUNT * (1.0f - dist / HEATMAP_SPREAD_RADIUS));
+            if (amount > 0) {
+                int v = (int)heatmap_temp[j] + amount;
+                heatmap_temp[j] = (uint8_t)(v > 255 ? 255 : v);
+            }
         }
     }
 }
@@ -85,8 +97,10 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
     int64_t now = k_uptime_get();
     int64_t elapsed = now - heatmap_last_decay_ms;
     /* Speed affects decay rate */
-    int decay_interval = HEATMAP_DECAY_INTERVAL / (state.animation_speed > 0 ? state.animation_speed : 1);
-    if (decay_interval < 10) decay_interval = 10;
+    int decay_interval =
+        HEATMAP_DECAY_INTERVAL / (state.animation_speed > 0 ? state.animation_speed : 1);
+    if (decay_interval < 10)
+        decay_interval = 10;
 
     if (elapsed >= decay_interval) {
         int ticks = (int)(elapsed / decay_interval);
