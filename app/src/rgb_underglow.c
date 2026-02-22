@@ -283,6 +283,7 @@ struct rgb_underglow_state {
     uint16_t animation_step;
     bool on;
     bool layer_enabled;
+    uint8_t _reserved; /* padding to invalidate 0.3 saved settings on OTA */
 };
 
 static const struct device *led_strip;
