@@ -58,7 +58,6 @@ static void heatmap_reset(void) {
 
 static void zmk_rgb_underglow_effect_typing_heatmap(void) {
     float brt = get_brightness_factor();
-    float user_sat = (float)state.color.s / 100.0f;
 
     uint32_t now = (uint32_t)k_uptime_get();
     int delay_ms =
@@ -81,20 +80,41 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
             continue;
         }
 
-        /* QMK hue: 170(blue)→85(green)→0(red), converted to 0-360 */
-        uint8_t qmk_hue = 170 - (val > 85 ? val - 85 : 0);
-        uint16_t hue_360 = (uint16_t)qmk_hue * 360 / 256;
+        /* Smooth heatmap gradient: blue → cyan → green → yellow → red
+         * 5 stops evenly spaced across val 1-255 for perceptually balanced transitions. */
+        float t = (float)val / 255.0f;
+        float r, g, b;
+        if (t < 0.25f) {
+            /* blue → cyan */
+            float s = t / 0.25f;
+            r = 0.0f;
+            g = s;
+            b = 1.0f;
+        } else if (t < 0.5f) {
+            /* cyan → green */
+            float s = (t - 0.25f) / 0.25f;
+            r = 0.0f;
+            g = 1.0f;
+            b = 1.0f - s;
+        } else if (t < 0.75f) {
+            /* green → yellow */
+            float s = (t - 0.5f) / 0.25f;
+            r = s;
+            g = 1.0f;
+            b = 0.0f;
+        } else {
+            /* yellow → red */
+            float s = (t - 0.75f) / 0.25f;
+            r = 1.0f;
+            g = 1.0f - s;
+            b = 0.0f;
+        }
 
-        /* QMK brightness: ramps from 0, saturates at val≥85 */
-        int raw_v = (val > 170 ? 255 : (int)val * 3);
-        float led_brt = ((float)raw_v / 255.0f) * brt;
+        /* Brightness: ramp up for low val, full at val≥85 */
+        float intensity = (val >= 85 ? 1.0f : (float)val / 85.0f) * brt;
 
-        struct color_hsl hsl = {.h = hue_360, .s = (uint8_t)(user_sat * 100.0f), .l = 50};
-        struct color_rgb_float rgb;
-        hsl_to_rgb_float(&hsl, &rgb);
-
-        fx_pixels[i].r = rgb.r * led_brt;
-        fx_pixels[i].g = rgb.g * led_brt;
-        fx_pixels[i].b = rgb.b * led_brt;
+        fx_pixels[i].r = r * intensity;
+        fx_pixels[i].g = g * intensity;
+        fx_pixels[i].b = b * intensity;
     }
 }
