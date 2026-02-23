@@ -8,6 +8,7 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zephyr/settings/settings.h>
+#include <pb_encode.h>
 #include <zmk/studio/rpc.h>
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
@@ -23,6 +24,45 @@ ZMK_RPC_SUBSYSTEM(lighting)
 #define LIGHTING_RESPONSE(type, ...) ZMK_RPC_RESPONSE(lighting, type, __VA_ARGS__)
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+
+static const char *const effect_names[] = {
+    "Solid",
+    "Breathing",
+    "Rainbow",
+    "Reactive",
+    "Wave",
+    "Knight",
+    "Twinkle",
+    "Gradient",
+    "Sparkle",
+    "Ripple",
+    "Alphas Mods",
+    "Raindrops",
+    "Reactive Wide",
+    "Reactive Nexus",
+    "Typing Heatmap",
+};
+
+BUILD_ASSERT(ARRAY_SIZE(effect_names) == 15,
+             "effect_names array size must match UNDERGLOW_EFFECT_NUMBER");
+
+static bool encode_effect_names(pb_ostream_t *stream, const pb_field_t *field,
+                                void *const *arg) {
+    int count = zmk_rgb_underglow_get_effect_count();
+    if (count > (int)ARRAY_SIZE(effect_names)) {
+        count = (int)ARRAY_SIZE(effect_names);
+    }
+    for (int i = 0; i < count; i++) {
+        if (!pb_encode_tag_for_field(stream, field)) {
+            return false;
+        }
+        if (!pb_encode_string(stream, (const pb_byte_t *)effect_names[i],
+                              strlen(effect_names[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 static zmk_studio_Response get_rgb_underglow_state(const zmk_studio_Request *req) {
     LOG_DBG("");
@@ -43,6 +83,8 @@ static zmk_studio_Response get_rgb_underglow_state(const zmk_studio_Request *req
     resp.color.b = hsb.b;
     resp.effect = (uint32_t)zmk_rgb_underglow_get_effect();
     resp.speed = (uint32_t)zmk_rgb_underglow_get_speed();
+    resp.effect_count = (uint32_t)zmk_rgb_underglow_get_effect_count();
+    resp.effect_names.funcs.encode = encode_effect_names;
 
     return LIGHTING_RESPONSE(get_rgb_underglow_state, resp);
 }
