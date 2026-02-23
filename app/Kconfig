@@ -321,7 +321,7 @@ config ZMK_RGB_UNDERGLOW_BRT_START
 
 config ZMK_RGB_UNDERGLOW_SPD_START
     int "RGB underglow start animation speed value"
-    range 1 5
+    range 1 10
 
 config ZMK_RGB_UNDERGLOW_EFF_START
     int "RGB underglow start effect int value related to the effect enum list"

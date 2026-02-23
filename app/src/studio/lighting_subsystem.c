@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+#include <zephyr/settings/settings.h>
 #include <zmk/studio/rpc.h>
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
@@ -32,8 +33,16 @@ static zmk_studio_Response get_rgb_underglow_state(const zmk_studio_Request *req
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
 
+    struct zmk_led_hsb hsb = zmk_rgb_underglow_get_hsb();
+
     zmk_lighting_RgbUnderglowState resp = zmk_lighting_RgbUnderglowState_init_zero;
     resp.on = on;
+    resp.has_color = true;
+    resp.color.h = hsb.h;
+    resp.color.s = hsb.s;
+    resp.color.b = hsb.b;
+    resp.effect = (uint32_t)zmk_rgb_underglow_get_effect();
+    resp.speed = (uint32_t)zmk_rgb_underglow_get_speed();
 
     return LIGHTING_RESPONSE(get_rgb_underglow_state, resp);
 }
@@ -55,10 +64,16 @@ static zmk_studio_Response set_rgb_underglow_state(const zmk_studio_Request *req
             .b = (uint8_t)set_req->field.color.b,
         };
         ret = zmk_rgb_underglow_set_hsb(hsb);
+        if (ret == 0) {
+            zmk_rgb_underglow_save_state();
+        }
         break;
     }
     case zmk_lighting_SetRgbUnderglowStateRequest_effect_tag:
         ret = zmk_rgb_underglow_select_effect((int)set_req->field.effect);
+        break;
+    case zmk_lighting_SetRgbUnderglowStateRequest_speed_tag:
+        ret = zmk_rgb_underglow_set_speed((int)set_req->field.speed);
         break;
     default:
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
@@ -120,13 +135,27 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
     LOG_DBG("");
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
-    zmk_rgb_underglow_save_state();
+    int ret = zmk_rgb_underglow_save_state();
+    if (ret < 0) {
+        LOG_ERR("Failed to save RGB underglow state: %d", ret);
+        return LIGHTING_RESPONSE(save_state, false);
+    }
 #endif
-
-    /* Backlight state is automatically persisted by zmk_backlight_on/off/set_brt,
-     * so no explicit save call is needed here. */
 
     return LIGHTING_RESPONSE(save_state, true);
 }
 
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, save_state, ZMK_STUDIO_RPC_HANDLER_SECURED);
+
+static int lighting_settings_reset(void) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    int ret = settings_delete("rgb/underglow/state");
+    if (ret < 0 && ret != -ENOENT) {
+        return ret;
+    }
+#endif
+
+    return 0;
+}
+
+ZMK_RPC_SUBSYSTEM_SETTINGS_RESET(lighting, lighting_settings_reset);

@@ -935,9 +935,36 @@ int zmk_rgb_underglow_change_spd(int direction) {
     if (state.animation_speed == 1 && direction < 0)
         return 0;
     state.animation_speed += direction;
-    if (state.animation_speed > 5)
-        state.animation_speed = 5;
+    if (state.animation_speed > 10)
+        state.animation_speed = 10;
     return zmk_rgb_underglow_save_state();
+}
+
+struct zmk_led_hsb zmk_rgb_underglow_get_hsb(void) {
+    return state.color;
+}
+
+int zmk_rgb_underglow_get_effect(void) {
+    return (int)state.current_effect;
+}
+
+int zmk_rgb_underglow_get_speed(void) {
+    return (int)state.animation_speed;
+}
+
+int zmk_rgb_underglow_set_speed(int speed) {
+    if (!led_strip)
+        return -ENODEV;
+    if (speed < 1)
+        speed = 1;
+    if (speed > 10)
+        speed = 10;
+    state.animation_speed = (uint8_t)speed;
+    return zmk_rgb_underglow_save_state();
+}
+
+int zmk_rgb_underglow_get_effect_count(void) {
+    return UNDERGLOW_EFFECT_NUMBER;
 }
 
 /* ========================================================================= */
