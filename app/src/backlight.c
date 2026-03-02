@@ -42,8 +42,27 @@ struct backlight_state {
 static struct backlight_state state = {.brightness = CONFIG_ZMK_BACKLIGHT_BRT_START,
                                        .on = IS_ENABLED(CONFIG_ZMK_BACKLIGHT_ON_START)};
 
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+static bool auto_off_idle_suppressed = false;
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
+static bool auto_off_usb_suppressed = false;
+#endif
+
+static bool backlight_is_suppressed(void) {
+    bool suppressed = false;
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+    suppressed = suppressed || auto_off_idle_suppressed;
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
+    suppressed = suppressed || auto_off_usb_suppressed;
+#endif
+    return suppressed;
+}
+
 static int zmk_backlight_update(void) {
-    uint8_t brt = zmk_backlight_get_brt();
+    uint8_t brt = backlight_is_suppressed() ? 0 : zmk_backlight_get_brt();
     LOG_DBG("Update backlight brightness: %d%%", brt);
 
     for (int i = 0; i < BACKLIGHT_NUM_LEDS; i++) {
@@ -95,7 +114,7 @@ static int zmk_backlight_init(void) {
     k_work_init_delayable(&backlight_save_work, backlight_save_work_handler);
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
-    state.on = zmk_usb_is_powered();
+    auto_off_usb_suppressed = !zmk_usb_is_powered();
 #endif
     return zmk_backlight_update();
 }
@@ -151,28 +170,27 @@ uint8_t zmk_backlight_calc_brt_cycle(void) {
 }
 
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) || IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
-static int backlight_auto_state(bool *prev_state, bool new_state) {
-    if (state.on == new_state) {
-        return 0;
-    }
-    state.on = new_state && *prev_state;
-    *prev_state = !new_state;
-    return zmk_backlight_update();
-}
-
 static int backlight_event_listener(const zmk_event_t *eh) {
 
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
     if (as_zmk_activity_state_changed(eh)) {
-        static bool prev_state = false;
-        return backlight_auto_state(&prev_state, zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE);
+        bool suppressed = zmk_activity_get_state() != ZMK_ACTIVITY_ACTIVE;
+        if (auto_off_idle_suppressed == suppressed) {
+            return 0;
+        }
+        auto_off_idle_suppressed = suppressed;
+        return zmk_backlight_update();
     }
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
     if (as_zmk_usb_conn_state_changed(eh)) {
-        static bool prev_state = false;
-        return backlight_auto_state(&prev_state, zmk_usb_is_powered());
+        bool suppressed = !zmk_usb_is_powered();
+        if (auto_off_usb_suppressed == suppressed) {
+            return 0;
+        }
+        auto_off_usb_suppressed = suppressed;
+        return zmk_backlight_update();
     }
 #endif
 
