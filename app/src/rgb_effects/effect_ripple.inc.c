@@ -48,15 +48,15 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     k_mutex_lock(&ripple_mutex, K_FOREVER);
     uint8_t count = ripple_num_events;
     uint8_t start = ripple_events_start;
-    struct ripple_event local_events[RIPPLE_MAX_EVENTS];
+    static struct ripple_event local_events[RIPPLE_MAX_EVENTS];
     for (int i = 0; i < count; i++) {
         local_events[i] = ripple_events[(start + i) % RIPPLE_MAX_EVENTS];
     }
     k_mutex_unlock(&ripple_mutex);
 
     /* Pre-compute source coordinates for each event */
-    float ev_src_x[RIPPLE_MAX_EVENTS];
-    float ev_src_y[RIPPLE_MAX_EVENTS];
+    static float ev_src_x[RIPPLE_MAX_EVENTS];
+    static float ev_src_y[RIPPLE_MAX_EVENTS];
     for (int i = 0; i < count; i++) {
         ev_src_x[i] = key_src_x(local_events[i].pixel_id);
         ev_src_y[i] = key_src_y(local_events[i].pixel_id);

@@ -90,6 +90,9 @@ struct color_hsl {
 static float float_mod(float a, float b) {
     float mod = a < 0 ? -a : a;
     float x = b < 0 ? -b : b;
+    if (x == 0.0f) {
+        return 0.0f;
+    }
     while (mod >= x) {
         mod = mod - x;
     }
@@ -834,6 +837,7 @@ int zmk_rgb_underglow_transient_off(void) {
     state.on = false;
     k_timer_stop(&underglow_tick);
     k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
+
     return 0;
 }
 
