@@ -831,9 +831,9 @@ int zmk_rgb_underglow_transient_off(void) {
     }
 #endif
 
-    k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
-    k_timer_stop(&underglow_tick);
     state.on = false;
+    k_timer_stop(&underglow_tick);
+    k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
     return 0;
 }
 
