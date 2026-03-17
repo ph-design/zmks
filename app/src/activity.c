@@ -120,11 +120,11 @@ static void note_activity_work_cb(struct k_work *_work) { note_activity(); }
 
 K_WORK_DEFINE(note_activity_work, note_activity_work_cb);
 
-static void activity_input_listener(struct input_event *ev, void *user_data) {
+static void activity_input_listener(struct input_event *ev) {
     k_work_submit(&note_activity_work);
 }
 
-INPUT_CALLBACK_DEFINE(NULL, activity_input_listener, NULL);
+INPUT_CALLBACK_DEFINE(NULL, activity_input_listener);
 
 #endif
 
