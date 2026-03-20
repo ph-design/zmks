@@ -159,6 +159,18 @@ int rgb_led_position_raw_y(int binding_idx) {
 #if IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 
 #define RGB_LAYER_SETTINGS_KEY "rgb/layer/%d"
+#define RGB_LAYER_ENABLED_KEY "rgb/layer_en"
+
+static bool layer_led_enabled = true;
+
+bool zmk_rgb_layer_is_enabled(void) { return layer_led_enabled; }
+
+int zmk_rgb_layer_set_enabled(bool enabled) {
+    layer_led_enabled = enabled;
+    raise_zmk_underglow_color_changed(
+        (struct zmk_underglow_color_changed){.layers = 0xFFFFFFFF, .wakeup = true});
+    return 0;
+}
 
 int zmk_rgb_layer_get_color(uint8_t layer_id, uint8_t key_pos, uint32_t *color) {
     int rgblayer = zmk_rgbmap_id(layer_id);
@@ -201,6 +213,14 @@ int zmk_rgb_layer_save(void) {
         }
     }
 
+    /* Persist enabled flag */
+    uint8_t en = layer_led_enabled ? 1 : 0;
+    int ret = settings_save_one(RGB_LAYER_ENABLED_KEY, &en, sizeof(en));
+    if (ret < 0) {
+        LOG_ERR("Failed to save layer LED enabled: %d", ret);
+        return ret;
+    }
+
     return 0;
 }
 
@@ -240,6 +260,16 @@ static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb
         return 0;
     }
 
+    if (settings_name_steq(name, "layer_en", &next) && !next) {
+        uint8_t en;
+        int rc = read_cb(cb_arg, &en, sizeof(en));
+        if (rc <= 0) {
+            return rc;
+        }
+        layer_led_enabled = en ? true : false;
+        return 0;
+    }
+
     return -ENOENT;
 }
 
@@ -254,6 +284,8 @@ int zmk_rgb_layer_settings_reset(void) {
             return ret;
         }
     }
+    settings_delete(RGB_LAYER_ENABLED_KEY);
+    layer_led_enabled = true;
     return 0;
 }
 

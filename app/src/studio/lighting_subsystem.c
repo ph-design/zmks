@@ -265,6 +265,7 @@ static zmk_studio_Response get_layer_led_colors(const zmk_studio_Request *req) {
     resp.key_count = zmk_rgb_layer_key_count();
     resp.layer_count = zmk_rgb_layer_count();
     resp.layers.funcs.encode = encode_layer_led_configs;
+    resp.enabled = zmk_rgb_layer_is_enabled();
 
     return LIGHTING_RESPONSE(get_layer_led_colors, resp);
 }
@@ -276,6 +277,10 @@ static zmk_studio_Response set_layer_led_binding(const zmk_studio_Request *req) 
         &req->subsystem.lighting.request_type.set_layer_led_binding;
 
     int ret = zmk_rgb_layer_set_binding((uint8_t)r->layer_id, (uint8_t)r->key_position, r->color);
+    if (ret == 0) {
+        raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
+            .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
+    }
     return LIGHTING_RESPONSE(set_layer_led_binding, ret == 0);
 }
 
@@ -290,9 +295,22 @@ static zmk_studio_Response save_layer_led_state(const zmk_studio_Request *req) {
     return LIGHTING_RESPONSE(save_layer_led_state, ret == 0);
 }
 
+static zmk_studio_Response set_layer_led_enabled(const zmk_studio_Request *req) {
+    LOG_DBG("");
+
+    bool enabled = req->subsystem.lighting.request_type.set_layer_led_enabled;
+    int ret = zmk_rgb_layer_set_enabled(enabled);
+    if (ret == 0) {
+        raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
+            .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
+    }
+    return LIGHTING_RESPONSE(set_layer_led_enabled, ret == 0);
+}
+
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, get_layer_led_colors, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_layer_led_binding, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, save_layer_led_state, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_layer_led_enabled, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
 /* ------------------------------------------------------------------ */
 /*  CapsLock Indicator RPC handlers                                   */
@@ -336,6 +354,10 @@ static zmk_studio_Response set_caps_lock_indicator(const zmk_studio_Request *req
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
 
+    if (ret == 0) {
+        raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
+            .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
+    }
     return LIGHTING_RESPONSE(set_caps_lock_indicator, ret == 0);
 }
 

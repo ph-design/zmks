@@ -44,6 +44,8 @@ uint8_t zmk_rgb_layer_count(void);
 uint8_t zmk_rgb_layer_key_count(void);
 int zmk_rgb_layer_id(uint8_t rgblayer_idx);
 int zmk_rgb_layer_settings_reset(void);
+bool zmk_rgb_layer_is_enabled(void);
+int zmk_rgb_layer_set_enabled(bool enabled);
 
 /* CapsLock indicator runtime configuration */
 int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_t *on_color,
