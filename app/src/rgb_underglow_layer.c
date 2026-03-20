@@ -9,6 +9,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/logging/log.h>
+#include <string.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zephyr/settings/settings.h>
@@ -159,7 +160,7 @@ int rgb_led_position_raw_y(int binding_idx) {
 #if IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 
 #define RGB_LAYER_SETTINGS_KEY "rgb/layer/%d"
-#define RGB_LAYER_ENABLED_KEY "rgb/layer_en"
+#define RGB_LAYER_ENABLED_KEY "rgb/layer/en"
 
 static bool layer_led_enabled = true;
 
@@ -237,30 +238,15 @@ int zmk_rgb_layer_id(uint8_t rgblayer_idx) {
 
 static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb read_cb,
                                   void *cb_arg) {
-    const char *next;
-
-    if (settings_name_steq(name, "layer", &next) && next) {
-        unsigned int layer_idx = atoi(next);
-        if (layer_idx >= ZMK_RGBMAP_LAYERS_LEN) {
-            LOG_WRN("RGB layer index %u out of range", layer_idx);
-            return -EINVAL;
-        }
-
-        uint32_t colors[ZMK_KEYMAP_LEN];
-        int rc = read_cb(cb_arg, colors, sizeof(colors));
-        if (rc <= 0) {
-            LOG_ERR("Failed to read RGB layer %u settings (err %d)", layer_idx, rc);
-            return rc;
-        }
-
-        for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
-            zmk_rgbmap[layer_idx][k].param1 = colors[k];
-        }
-
-        return 0;
+    /* Handler prefix is "rgb/layer". Zephyr strips it, so we receive:
+     *   key "rgb/layer/0"  → name = "0"
+     *   key "rgb/layer/en" → name = "en"
+     */
+    if (!name || !name[0]) {
+        return -ENOENT;
     }
 
-    if (settings_name_steq(name, "layer_en", &next) && !next) {
+    if (strcmp(name, "en") == 0) {
         uint8_t en;
         int rc = read_cb(cb_arg, &en, sizeof(en));
         if (rc <= 0) {
@@ -270,7 +256,24 @@ static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb
         return 0;
     }
 
-    return -ENOENT;
+    unsigned int layer_idx = atoi(name);
+    if (layer_idx >= ZMK_RGBMAP_LAYERS_LEN) {
+        LOG_WRN("RGB layer index %u out of range", layer_idx);
+        return -EINVAL;
+    }
+
+    uint32_t colors[ZMK_KEYMAP_LEN];
+    int rc = read_cb(cb_arg, colors, sizeof(colors));
+    if (rc <= 0) {
+        LOG_ERR("Failed to read RGB layer %u settings (err %d)", layer_idx, rc);
+        return rc;
+    }
+
+    for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
+        zmk_rgbmap[layer_idx][k].param1 = colors[k];
+    }
+
+    return 0;
 }
 
 SETTINGS_STATIC_HANDLER_DEFINE(rgb_layer, "rgb/layer", NULL, rgb_layer_settings_set, NULL, NULL);
