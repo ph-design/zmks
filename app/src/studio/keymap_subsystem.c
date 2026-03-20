@@ -16,6 +16,10 @@ LOG_MODULE_DECLARE(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 #include <zmk/studio/rpc.h>
 #include <zmk/physical_layouts.h>
 
+#if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
+#include <zmk/rgb_underglow_layer.h>
+#endif
+
 #include <pb_encode.h>
 
 ZMK_RPC_SUBSYSTEM(keymap)
@@ -217,6 +221,15 @@ zmk_studio_Response save_changes(const zmk_studio_Request *req) {
         return KEYMAP_RESPONSE(save_changes, resp);
     }
 
+#if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
+    ret = zmk_rgb_layer_save();
+    if (ret < 0) {
+        LOG_WRN("Failed to save layer LED changes (%d)", ret);
+        map_errno_to_save_resp(ret, &resp);
+        return KEYMAP_RESPONSE(save_changes, resp);
+    }
+#endif
+
     raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
         .notification = KEYMAP_NOTIFICATION(unsaved_changes_status_changed, false)});
 
@@ -234,6 +247,13 @@ zmk_studio_Response discard_changes(const zmk_studio_Request *req) {
     if (ret < 0) {
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
+
+#if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
+    ret = zmk_rgb_layer_settings_reset();
+    if (ret < 0) {
+        LOG_WRN("Failed to discard layer LED changes (%d)", ret);
+    }
+#endif
 
     raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
         .notification = KEYMAP_NOTIFICATION(unsaved_changes_status_changed, false)});
