@@ -35,3 +35,21 @@ const struct zmk_behavior_binding *rgb_underglow_get_bindings(uint8_t layer);
 
 uint8_t rgb_underglow_top_layer_with_state(uint32_t state_to_test);
 uint8_t rgb_underglow_top_layer(void);
+
+/* Runtime layer LED color configuration (requires CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE) */
+int zmk_rgb_layer_get_color(uint8_t layer_id, uint8_t key_pos, uint32_t *color);
+int zmk_rgb_layer_set_binding(uint8_t layer_id, uint8_t key_pos, uint32_t color);
+int zmk_rgb_layer_save(void);
+uint8_t zmk_rgb_layer_count(void);
+uint8_t zmk_rgb_layer_key_count(void);
+int zmk_rgb_layer_id(uint8_t rgblayer_idx);
+int zmk_rgb_layer_settings_reset(void);
+
+/* CapsLock indicator runtime configuration */
+int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_t *on_color,
+                                     uint8_t *key_pos);
+int zmk_capslock_indicator_set_enabled(bool enabled);
+int zmk_capslock_indicator_set_off_color(uint32_t color);
+int zmk_capslock_indicator_set_on_color(uint32_t color);
+int zmk_capslock_indicator_save(void);
+int zmk_capslock_indicator_settings_reset(void);
