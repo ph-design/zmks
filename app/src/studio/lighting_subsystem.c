@@ -298,8 +298,9 @@ static zmk_studio_Response save_layer_led_state(const zmk_studio_Request *req) {
 static zmk_studio_Response set_layer_led_enabled(const zmk_studio_Request *req) {
     LOG_DBG("");
 
-    bool enabled = req->subsystem.lighting.request_type.set_layer_led_enabled;
-    int ret = zmk_rgb_layer_set_enabled(enabled);
+    const zmk_lighting_SetLayerLedEnabledRequest *r =
+        &req->subsystem.lighting.request_type.set_layer_led_enabled;
+    int ret = zmk_rgb_layer_set_enabled(r->enabled);
     if (ret == 0) {
         raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
             .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
