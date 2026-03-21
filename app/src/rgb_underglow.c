@@ -538,9 +538,6 @@ static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 static void zmk_rgb_underglow_apply_layer_overlay(void) {
-    if (!zmk_rgb_layer_is_enabled())
-        return;
-
     uint8_t layer = rgb_underglow_top_layer();
     const struct zmk_behavior_binding *rgbmap = rgb_underglow_get_bindings(layer);
     if (rgbmap == NULL)

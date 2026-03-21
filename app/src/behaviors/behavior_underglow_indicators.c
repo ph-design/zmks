@@ -12,6 +12,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
 #include <zmk/hid_indicators.h>
+#include <dt-bindings/zmk/hid_indicators.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/hid_indicators_changed.h>
 #include <zmk/events/underglow_color_changed.h>
@@ -64,19 +65,22 @@ static int underglow_indicators_process(struct zmk_behavior_binding *binding,
     data->layers |= BIT(event.layer);
 
     /* Record the key position of this CapsLock indicator for Studio queries */
-    if (!capslock_key_position_set) {
+    if (!capslock_key_position_set && config->indicator == CAPS_LOCK) {
         capslock_key_position = (uint8_t)event.position;
         capslock_key_position_set = true;
     }
 
-    if (caps_override.has_override) {
+    if (caps_override.has_override && config->indicator == CAPS_LOCK) {
         if (!caps_override.enabled) {
             return 0; /* Disabled: transparent */
         }
         if (data->indicators & BIT(config->indicator)) {
-            return caps_override.on_color;
+            /* Use bit 24 as valid-color marker so 0x000000 (black) is not
+             * confused with transparent (0).  The overlay only uses the
+             * lower 24 bits for RGB. */
+            return caps_override.on_color | 0x01000000;
         } else {
-            return caps_override.off_color;
+            return caps_override.off_color | 0x01000000;
         }
     }
 

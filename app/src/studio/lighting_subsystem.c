@@ -291,7 +291,17 @@ static zmk_studio_Response save_layer_led_state(const zmk_studio_Request *req) {
     if (ret < 0) {
         LOG_ERR("Failed to save layer LED state: %d", ret);
     }
-    ret |= zmk_capslock_indicator_save();
+
+    /* Only persist CapsLock override if the user actually modified it;
+     * otherwise we would write default values that activate the override
+     * on next boot and discard the devicetree colors. */
+    bool caps_en;
+    uint32_t caps_off, caps_on;
+    uint8_t caps_pos;
+    zmk_capslock_indicator_get_state(&caps_en, &caps_off, &caps_on, &caps_pos);
+    if (caps_off != 0 || caps_on != 0 || !caps_en) {
+        ret |= zmk_capslock_indicator_save();
+    }
     return LIGHTING_RESPONSE(save_layer_led_state, ret == 0);
 }
 
