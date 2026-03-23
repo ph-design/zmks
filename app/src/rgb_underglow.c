@@ -993,24 +993,35 @@ int zmk_rgb_underglow_get_effect_count(void) {
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE) ||                                          \
     IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_USB) || IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
 
-static int rgb_underglow_auto_state(bool target_wake_state) {
-    static struct {
-        bool is_awake;
-        bool rgb_state_before_sleeping;
-    } sleep_state = {.is_awake = true, .rgb_state_before_sleeping = false};
+static struct {
+    bool rgb_state_before_auto_off; /* user's RGB on/off before any auto-off kicked in */
+    bool saved;                     /* true once we've captured the user state */
+    bool idle_wants_off;            /* idle triggered auto-off */
+    bool usb_wants_off;             /* USB disconnect triggered auto-off */
+} auto_off_state;
 
-    if (target_wake_state == sleep_state.is_awake)
-        return 0;
-    sleep_state.is_awake = target_wake_state;
+static bool auto_off_any_active(void) {
+    return auto_off_state.idle_wants_off || auto_off_state.usb_wants_off;
+}
 
-    if (sleep_state.is_awake) {
-        if (sleep_state.rgb_state_before_sleeping)
-            return zmk_rgb_underglow_transient_on();
-        else
-            return zmk_rgb_underglow_transient_off();
-    } else {
-        sleep_state.rgb_state_before_sleeping = state.on;
+static int rgb_underglow_auto_update(void) {
+    bool should_off = auto_off_any_active();
+
+    if (should_off) {
+        if (!auto_off_state.saved) {
+            auto_off_state.rgb_state_before_auto_off = state.on;
+            auto_off_state.saved = true;
+        }
         return zmk_rgb_underglow_transient_off();
+    } else {
+        if (auto_off_state.saved) {
+            auto_off_state.saved = false;
+            if (auto_off_state.rgb_state_before_auto_off)
+                return zmk_rgb_underglow_transient_on();
+            else
+                return zmk_rgb_underglow_transient_off();
+        }
+        return 0;
     }
 }
 #endif
@@ -1019,7 +1030,8 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE)
     if (as_zmk_activity_state_changed(eh)) {
-        return rgb_underglow_auto_state(zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE);
+        auto_off_state.idle_wants_off = (zmk_activity_get_state() != ZMK_ACTIVITY_ACTIVE);
+        return rgb_underglow_auto_update();
     }
 #endif
 
@@ -1040,7 +1052,8 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_USB)
     if (as_zmk_usb_conn_state_changed(eh)) {
-        return rgb_underglow_auto_state(zmk_usb_is_powered());
+        auto_off_state.usb_wants_off = !zmk_usb_is_powered();
+        return rgb_underglow_auto_update();
     }
 #endif
 
