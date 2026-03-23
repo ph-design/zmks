@@ -418,19 +418,19 @@ static float gradient_offset = 0.0f;
 /* ========================================================================= */
 
 /*
- * Peceptually-uniform speed curve based on Weber-Fechner law.
+ * Perceptually-uniform speed curve based on Weber-Fechner law.
  *
  * Formula:  effective(n) = Smin * (Smax/Smin) ^ ((n-1)/(N-1))
- *           Smin = 1.0,  Smax = 5.0,  N = 10
+ *           Smin = 1.0,  Smax = 7.0,  N = 10
  *
- * Each step is ~20% faster than the previous, giving equal perceived
+ * Each step is ~24% faster than the previous, giving equal perceived
  * speed increments across all 10 levels.
  *
  *   User:      1     2     3     4     5     6     7     8     9    10
- *   Effective: 1.00  1.20  1.43  1.71  2.05  2.45  2.93  3.50  4.19  5.00
+ *   Effective: 1.00  1.24  1.54  1.91  2.38  2.95  3.66  4.54  5.64  7.00
  */
 static const float speed_curve[11] = {
-    0.0f, 1.00f, 1.20f, 1.43f, 1.71f, 2.05f, 2.45f, 2.93f, 3.50f, 4.19f, 5.00f,
+    0.0f, 1.00f, 1.24f, 1.54f, 1.91f, 2.38f, 2.95f, 3.66f, 4.54f, 5.64f, 7.00f,
 };
 
 static inline float anim_speed(void) {
