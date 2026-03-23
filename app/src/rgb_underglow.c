@@ -87,26 +87,12 @@ struct color_hsl {
     uint8_t l;
 };
 
-static float float_mod(float a, float b) {
-    float mod = a < 0 ? -a : a;
-    float x = b < 0 ? -b : b;
-    if (x == 0.0f) {
-        return 0.0f;
-    }
-    while (mod >= x) {
-        mod = mod - x;
-    }
-    return a < 0 ? -mod : mod;
-}
-
-static float float_abs(float a) { return a < 0 ? -a : a; }
-
 static void hsl_to_rgb_float(const struct color_hsl *hsl, struct color_rgb_float *rgb) {
     float s = (float)hsl->s / 100;
     float l = (float)hsl->l / 100;
     float a = (float)hsl->h / 60;
-    float chroma = s * (1 - float_abs(2 * l - 1));
-    float x = chroma * (1 - float_abs(float_mod(a, 2) - 1));
+    float chroma = s * (1 - fabsf(2 * l - 1));
+    float x = chroma * (1 - fabsf(fmodf(a, 2) - 1));
     float m = l - chroma / 2;
 
     switch ((uint8_t)a % 6) {
@@ -426,7 +412,31 @@ static uint8_t reactive_brightness[STRIP_NUM_PIXELS];
 /* ========================================================================= */
 
 static float gradient_offset = 0.0f;
-static uint16_t solid_counter = 0;
+
+/* ========================================================================= */
+/*  Non-linear Speed Curve                                                   */
+/* ========================================================================= */
+
+/*
+ * Peceptually-uniform speed curve based on Weber-Fechner law.
+ *
+ * Formula:  effective(n) = Smin * (Smax/Smin) ^ ((n-1)/(N-1))
+ *           Smin = 1.0,  Smax = 5.0,  N = 10
+ *
+ * Each step is ~20% faster than the previous, giving equal perceived
+ * speed increments across all 10 levels.
+ *
+ *   User:      1     2     3     4     5     6     7     8     9    10
+ *   Effective: 1.00  1.20  1.43  1.71  2.05  2.45  2.93  3.50  4.19  5.00
+ */
+static const float speed_curve[11] = {
+    0.0f, 1.00f, 1.20f, 1.43f, 1.71f, 2.05f, 2.45f, 2.93f, 3.50f, 4.19f, 5.00f,
+};
+
+static inline float anim_speed(void) {
+    uint8_t s = state.animation_speed;
+    return speed_curve[s <= 10 ? s : 10];
+}
 
 /* ========================================================================= */
 /*  Effect Rendering Functions                                               */
@@ -480,7 +490,7 @@ struct rgb_effect_desc {
 };
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
-    [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid, .reset = solid_reset},
+    [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid},
     [UNDERGLOW_EFFECT_BREATHING] = {.render = zmk_rgb_underglow_effect_breathing,
                                     .reset = breathing_reset},
     [UNDERGLOW_EFFECT_RAINBOW] = {.render = zmk_rgb_underglow_effect_rainbow,

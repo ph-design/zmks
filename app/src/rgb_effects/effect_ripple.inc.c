@@ -39,7 +39,7 @@ static void zmk_rgb_underglow_effect_ripple(void) {
     }
 
     /* Ripple speed scales with animation_speed */
-    uint8_t distance_per_frame = 3 + state.animation_speed * 2;
+    uint8_t distance_per_frame = 3 + (int)anim_speed() * 2;
     uint8_t event_frames = 255 / distance_per_frame;
     if (event_frames < 1)
         event_frames = 1;

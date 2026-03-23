@@ -9,11 +9,11 @@ static void zmk_rgb_underglow_effect_twinkle(void) {
     float brt = get_brightness_factor();
 
     /* Probability of a new twinkle starting scales with speed */
-    int threshold = 200 - state.animation_speed * 30;
+    int threshold = 200 - (int)anim_speed() * 30;
     if (threshold < 20) threshold = 20;
 
     /* Step size for fade-in/out */
-    uint8_t step = 4 + state.animation_speed * 2;
+    uint8_t step = 4 + (int)anim_speed() * 2;
     if (step > 25) step = 25;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {

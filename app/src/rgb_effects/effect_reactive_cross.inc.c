@@ -64,7 +64,7 @@ static void zmk_rgb_underglow_effect_reactive_cross(void) {
     float brt = get_brightness_factor();
 
     /* Max lifetime: Speed 1 → 80 fr (1.3 s), Speed 5 → 16 fr (0.27 s) */
-    uint8_t max_age = 80 / (state.animation_speed > 0 ? state.animation_speed : 1);
+    uint8_t max_age = (uint8_t)(80.0f / anim_speed());
     if (max_age < 8)
         max_age = 8;
 

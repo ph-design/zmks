@@ -27,7 +27,7 @@ static void zmk_rgb_underglow_effect_wave(void) {
             (struct color_rgb_float){.r = base_rgb.r * f, .g = base_rgb.g * f, .b = base_rgb.b * f};
     }
 
-    wave_offset += (float)state.animation_speed * 0.05f;
+    wave_offset += anim_speed() * 0.05f;
     if (wave_offset > 2.0f * M_PI)
         wave_offset -= 2.0f * M_PI;
 }

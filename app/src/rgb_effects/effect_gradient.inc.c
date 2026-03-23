@@ -17,7 +17,7 @@ static void zmk_rgb_underglow_effect_gradient(void) {
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         /* Use normalised X position (0-1) mapped to gradient space */
         float pos = led_norm_x(i); /* 0-1 */
-        float distance = float_mod(1.0f + pos - gradient_offset, 1.0f);
+        float distance = fmodf(1.0f + pos - gradient_offset, 1.0f);
         if (distance < 0)
             distance += 1.0f;
 
@@ -39,7 +39,7 @@ static void zmk_rgb_underglow_effect_gradient(void) {
     }
 
     /* Scroll (normalised 0-1 range) */
-    gradient_offset += (float)state.animation_speed * 0.002f;
+    gradient_offset += anim_speed() * 0.002f;
     if (gradient_offset >= 1.0f) {
         gradient_offset -= 1.0f;
     }

@@ -9,7 +9,7 @@ static void zmk_rgb_underglow_effect_reactive(void) {
     float brt = get_brightness_factor();
 
     /* Fade speed scales with animation_speed: higher speed = faster fade */
-    uint8_t fade_step = 3 + state.animation_speed * 3;
+    uint8_t fade_step = 3 + (int)anim_speed() * 3;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         if (reactive_brightness[i] > 0) {

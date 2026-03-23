@@ -17,9 +17,7 @@ static void zmk_rgb_underglow_effect_reactive_enhanced(void) {
     float brt = get_brightness_factor();
 
     /* Decay rate scales with animation speed for responsiveness */
-    uint8_t decay = 2 + state.animation_speed;
-    if (decay > 12)
-        decay = 12;
+    uint8_t decay = 2 + (int)anim_speed();
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         uint8_t b = reactive_brightness[i];

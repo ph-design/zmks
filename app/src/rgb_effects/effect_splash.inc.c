@@ -62,7 +62,7 @@ static void zmk_rgb_underglow_effect_splash(void) {
      * Speed 1 → 100 frames (1.7 s)   Speed 3 → 33 frames (0.55 s)
      * Speed 5 → 20 frames (0.33 s)
      */
-    uint8_t max_age = 100 / (state.animation_speed > 0 ? state.animation_speed : 1);
+    uint8_t max_age = (uint8_t)(100.0f / anim_speed());
     if (max_age < 10)
         max_age = 10;
 

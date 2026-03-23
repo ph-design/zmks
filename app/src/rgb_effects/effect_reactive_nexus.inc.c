@@ -53,7 +53,7 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
     struct color_hsl hsl = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
 
-    uint8_t max_age = 100 / (state.animation_speed > 0 ? state.animation_speed : 1);
+    uint8_t max_age = (uint8_t)(100.0f / anim_speed());
     if (max_age < 8)
         max_age = 8;
 

@@ -23,7 +23,7 @@ static void zmk_rgb_underglow_effect_snake(void) {
     }
 
     /* Advance position */
-    snake_pos_f += (float)state.animation_speed * 0.005f;
+    snake_pos_f += anim_speed() * 0.005f;
     if (snake_pos_f >= 1.0f)
         snake_pos_f -= 1.0f;
 }

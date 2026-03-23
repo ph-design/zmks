@@ -43,7 +43,7 @@ static void zmk_rgb_underglow_effect_gradient_up_down(void) {
      * Speed 3 → 2.0°/frame → full cycle in 3 s
      * Speed 5 → 3.0°/frame → full cycle in 2 s
      */
-    gradient_ud_offset += 0.5f + (float)state.animation_speed * 0.5f;
+    gradient_ud_offset += 0.5f + anim_speed() * 0.5f;
     if (gradient_ud_offset >= 360.0f)
         gradient_ud_offset -= 360.0f;
 }

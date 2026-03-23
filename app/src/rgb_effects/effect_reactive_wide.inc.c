@@ -57,7 +57,7 @@ static void zmk_rgb_underglow_effect_reactive_wide(void) {
     float brt = get_brightness_factor();
 
     /* Max lifetime in frames — shorter at higher speed */
-    uint8_t max_age = 120 / (state.animation_speed > 0 ? state.animation_speed : 1);
+    uint8_t max_age = (uint8_t)(120.0f / anim_speed());
     if (max_age < 10)
         max_age = 10;
 

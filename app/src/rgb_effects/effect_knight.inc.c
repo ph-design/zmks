@@ -27,7 +27,7 @@ static void zmk_rgb_underglow_effect_knight(void) {
     }
 
     /* Frame accumulator for sub-pixel smooth motion at low speeds */
-    knight_frame_acc += state.animation_speed;
+    knight_frame_acc += (int)anim_speed();
     if (knight_frame_acc >= 2) {
         int steps = knight_frame_acc / 2;
         knight_frame_acc %= 2;

@@ -17,7 +17,7 @@ static void zmk_rgb_underglow_effect_swirl(void) {
         fx_pixels[i] = rgb;
     }
 
-    swirl_offset += (float)state.animation_speed * 0.06f;
+    swirl_offset += anim_speed() * 0.06f;
     if (swirl_offset > 2.0f * M_PI)
         swirl_offset -= 2.0f * M_PI;
 }

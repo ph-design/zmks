@@ -17,8 +17,8 @@ static void zmk_rgb_underglow_effect_sparkle(void) {
             /* Fade out phase */
             intensity = sparkle_data[i].step * (float)(sparkle_data[i].counter);
         }
-        if (intensity < 0)
-            intensity = 0;
+        if (intensity < 0.0f)
+            intensity = 0.0f;
         if (intensity > 1.0f)
             intensity = 1.0f;
 

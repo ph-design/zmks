@@ -20,7 +20,7 @@ static void zmk_rgb_underglow_effect_rainbow(void) {
             (struct color_rgb_float){.r = rgb.r * brt, .g = rgb.g * brt, .b = rgb.b * brt};
     }
 
-    rainbow_offset += (float)state.animation_speed * 1.8f;
+    rainbow_offset += anim_speed() * 1.8f;
     if (rainbow_offset >= 360.0f)
         rainbow_offset -= 360.0f;
 }

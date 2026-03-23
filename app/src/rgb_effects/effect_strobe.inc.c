@@ -6,7 +6,7 @@ static void zmk_rgb_underglow_effect_strobe(void) {
     hsl_to_rgb_float(&hsl, &rgb);
     float brt = get_brightness_factor();
 
-    int period = MAX(1, 10 - state.animation_speed * 2);
+    int period = MAX(1, 10 - (int)anim_speed() * 2);
     bool on = (strobe_counter % period) == 0;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {

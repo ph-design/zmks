@@ -16,7 +16,7 @@ static void zmk_rgb_underglow_effect_raindrops(void) {
     float brt = get_brightness_factor();
 
     /* Pick 1..speed random LEDs per frame and assign random hue */
-    int changes = state.animation_speed;
+    int changes = (int)anim_speed();
     if (changes < 1) changes = 1;
     for (int c = 0; c < changes; c++) {
         int idx = rand() % STRIP_NUM_PIXELS;

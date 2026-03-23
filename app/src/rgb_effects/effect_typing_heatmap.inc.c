@@ -61,7 +61,7 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
 
     uint32_t now = (uint32_t)k_uptime_get();
     int delay_ms =
-        HEATMAP_DECREASE_DELAY_MS / (state.animation_speed > 0 ? state.animation_speed : 1);
+        (int)(HEATMAP_DECREASE_DELAY_MS / anim_speed());
     if (delay_ms < 5)
         delay_ms = 5;
 

@@ -10,7 +10,3 @@ static void zmk_rgb_underglow_effect_solid(void) {
         fx_pixels[i] = out;
     }
 }
-
-static void solid_reset(void) {
-    solid_counter = 0;
-}

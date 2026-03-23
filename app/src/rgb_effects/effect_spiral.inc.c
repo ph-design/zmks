@@ -23,7 +23,7 @@ static void zmk_rgb_underglow_effect_spiral(void) {
         fx_pixels[i] = rgb;
     }
 
-    spiral_phase += (float)state.animation_speed * 0.005f;
+    spiral_phase += anim_speed() * 0.005f;
     if (spiral_phase >= 1.0f)
         spiral_phase -= 1.0f;
 }

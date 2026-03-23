@@ -15,6 +15,8 @@
 
 /* Maximum columns we'll support (enough for the largest keyboards) */
 #define DRAIN_MAX_COLS 32
+/* Column X-position merge tolerance (normalised 0–1 space) */
+#define RAIN_COL_TOLERANCE 0.03f
 
 struct rain_column {
     float head_y;    /* current Y position of drop head (0-1 normalised) */
@@ -36,7 +38,7 @@ static void rain_build_columns(void) {
         float x = led_norm_x(i);
         bool found = false;
         for (int c = 0; c < rain_num_cols; c++) {
-            if (fabsf(rain_col_x[c] - x) < 0.03f) {
+            if (fabsf(rain_col_x[c] - x) < RAIN_COL_TOLERANCE) {
                 found = true;
                 break;
             }
@@ -97,7 +99,7 @@ static void zmk_rgb_underglow_effect_digital_rain(void) {
     /* Fall rate: advance head every N frames */
     static uint8_t rain_frame_counter = 0;
     rain_frame_counter++;
-    uint8_t frames_per_step = 6 - state.animation_speed;
+    uint8_t frames_per_step = 6 - (int)anim_speed();
     if (frames_per_step < 1)
         frames_per_step = 1;
     bool advance = (rain_frame_counter >= frames_per_step);
@@ -112,7 +114,7 @@ static void zmk_rgb_underglow_effect_digital_rain(void) {
         fx_pixels[i] = (struct color_rgb_float){0, 0, 0};
     }
 
-    float fall_speed = 0.02f + (float)state.animation_speed * 0.01f;
+    float fall_speed = 0.02f + anim_speed() * 0.01f;
 
     for (int c = 0; c < cols; c++) {
         struct rain_column *rc = &rain_cols_state[c];
@@ -132,7 +134,7 @@ static void zmk_rgb_underglow_effect_digital_rain(void) {
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
             float jx = led_norm_x(j);
             /* Check if LED is in this column (within tolerance) */
-            if (fabsf(jx - rain_col_x[c]) > 0.03f)
+            if (fabsf(jx - rain_col_x[c]) > RAIN_COL_TOLERANCE)
                 continue;
 
             float jy = led_norm_y(j);
