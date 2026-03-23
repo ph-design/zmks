@@ -90,7 +90,13 @@ void activity_work_handler(struct k_work *work) {
     } else
 #endif /* IS_ENABLED(CONFIG_ZMK_SLEEP) */
         if (inactive_time > MAX_IDLE_MS) {
+#if IS_ENABLED(CONFIG_ZMK_IDLE_SKIP_ON_USB_POWER)
+            if (!is_usb_power_present()) {
+                set_state(ZMK_ACTIVITY_IDLE);
+            }
+#else
             set_state(ZMK_ACTIVITY_IDLE);
+#endif
         }
 }
 

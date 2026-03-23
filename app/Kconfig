@@ -399,6 +399,10 @@ config ZMK_IDLE_TIMEOUT
     int "Milliseconds of inactivity before entering idle state (OLED shutoff, etc)"
     default 30000
 
+config ZMK_IDLE_SKIP_ON_USB_POWER
+    bool "Skip idle state when USB cable is plugged in (VBUS powered)"
+    depends on USB_DEVICE_STACK
+
 config ZMK_SLEEP
     bool "Enable deep sleep support"
     depends on HAS_POWEROFF
