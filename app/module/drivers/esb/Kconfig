@@ -1,0 +1,53 @@
+# Copyright (c) 2026 Team PHDesign
+# SPDX-License-Identifier: MIT
+
+menuconfig ZMK_ESB
+	bool "ZMK ESB Radio Driver"
+	depends on SOC_SERIES_NRF52X
+	help
+	  Enhanced ShockBurst radio driver for nRF52 series.
+	  Supports PTX/PRX with ACK payload.
+
+if ZMK_ESB
+
+config ZMK_ESB_MAX_PAYLOAD_LENGTH
+	int "Max payload length"
+	default 32
+	range 1 252
+
+config ZMK_ESB_TX_FIFO_SIZE
+	int "TX FIFO size"
+	default 8
+	range 1 16
+
+config ZMK_ESB_RX_FIFO_SIZE
+	int "RX FIFO size"
+	default 8
+	range 1 16
+
+config ZMK_ESB_PIPE_COUNT
+	int "Number of pipes"
+	default 8
+	range 1 8
+
+config ZMK_ESB_DEFAULT_RF_CHANNEL
+	int "Default RF channel"
+	default 2
+	range 0 100
+
+config ZMK_ESB_LOG_LEVEL
+	int "Log level"
+	default 3
+	range 0 4
+
+config ZMK_ESB_PPI_CH0
+	int "PPI channel for ACK timeout"
+	default 8
+	range 0 19
+
+config ZMK_ESB_PPI_CH1
+	int "PPI channel for retransmit delay"
+	default 9
+	range 0 19
+
+endif # ZMK_ESB
