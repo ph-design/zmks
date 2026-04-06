@@ -24,10 +24,10 @@ LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
 
 #define RADIO_BASE_FREQ 2400UL
 #define PID_MAX 3
-#define RETRANSMIT_DELAY_MIN 250
 
-#define ACK_TIMEOUT_2MBPS 500
-#define ACK_TIMEOUT_1MBPS 800
+#define RETRANSMIT_DELAY_MIN 435
+#define ACK_TIMEOUT_2MBPS 200
+#define ACK_TIMEOUT_1MBPS 350
 
 #define ESB_TIMER_IRQ_PRIO 2
 #define ESB_RADIO_IRQ_PRIO 1
@@ -364,9 +364,9 @@ static void on_disabled_ptx_tx(void) {
 
     nrf_radio_packetptr_set(NRF_RADIO, rx_buf);
 
-    nrf_radio_shorts_set(NRF_RADIO,
-                         NRF_RADIO_SHORT_READY_START_MASK | NRF_RADIO_SHORT_END_DISABLE_MASK |
-                         NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
+    nrf_radio_shorts_set(NRF_RADIO, NRF_RADIO_SHORT_READY_START_MASK |
+                                        NRF_RADIO_SHORT_END_DISABLE_MASK |
+                                        NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
 
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
 
@@ -440,9 +440,9 @@ static void on_disabled_ptx_rx_ack(void) {
 }
 
 static void start_rx_listening(void) {
-    nrf_radio_shorts_set(NRF_RADIO,
-                         NRF_RADIO_SHORT_READY_START_MASK | NRF_RADIO_SHORT_END_DISABLE_MASK |
-                         NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
+    nrf_radio_shorts_set(NRF_RADIO, NRF_RADIO_SHORT_READY_START_MASK |
+                                        NRF_RADIO_SHORT_END_DISABLE_MASK |
+                                        NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
 
     nrf_radio_rxaddresses_set(NRF_RADIO, esb_addr.rx_pipes_enabled);
     nrf_radio_frequency_set(NRF_RADIO, RADIO_BASE_FREQ + esb_addr.rf_channel);
@@ -529,9 +529,9 @@ static void on_disabled_prx(void) {
 }
 
 static void on_disabled_prx_ack_sent(void) {
-    nrf_radio_shorts_set(NRF_RADIO,
-                         NRF_RADIO_SHORT_READY_START_MASK | NRF_RADIO_SHORT_END_DISABLE_MASK |
-                         NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
+    nrf_radio_shorts_set(NRF_RADIO, NRF_RADIO_SHORT_READY_START_MASK |
+                                        NRF_RADIO_SHORT_END_DISABLE_MASK |
+                                        NRF_RADIO_SHORT_ADDRESS_RSSISTART_MASK);
     nrf_radio_packetptr_set(NRF_RADIO, rx_buf);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
@@ -590,13 +590,9 @@ static void watchdog_handler(struct k_work *work) {
     esb_state = STATE_IDLE;
 }
 
-static void watchdog_start(void) {
-    k_work_schedule(&watchdog_work, K_MSEC(watchdog_timeout_ms));
-}
+static void watchdog_start(void) { k_work_schedule(&watchdog_work, K_MSEC(watchdog_timeout_ms)); }
 
-static void watchdog_cancel(void) {
-    k_work_cancel_delayable(&watchdog_work);
-}
+static void watchdog_cancel(void) { k_work_cancel_delayable(&watchdog_work); }
 
 static void radio_clear(void) {
     nrf_radio_shorts_set(NRF_RADIO, 0);
@@ -692,9 +688,7 @@ void zmk_esb_disable(void) {
     LOG_INF("ESB disabled");
 }
 
-bool zmk_esb_is_idle(void) {
-    return esb_state == STATE_IDLE;
-}
+bool zmk_esb_is_idle(void) { return esb_state == STATE_IDLE; }
 
 int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
     if (esb_state == STATE_UNINIT) {
@@ -883,7 +877,6 @@ int zmk_esb_set_tx_power(int8_t tx_power_dbm_val) {
         return -EBUSY;
     }
 
-    // 找到最接近的合法发射功率
     int8_t best = valid_tx_powers[0];
     int best_diff = 127;
     for (int i = 0; i < (int)ARRAY_SIZE(valid_tx_powers); i++) {

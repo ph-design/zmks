@@ -18,13 +18,25 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static struct zmk_esb_payload tx_payload;
 static bool ready;
+static struct k_work_delayable resend_work;
+
+static void resend_work_handler(struct k_work *work) {
+    if (!ready) {
+        return;
+    }
+
+    zmk_2g4_send_keyboard_report();
+    zmk_2g4_send_consumer_report();
+}
 
 static void esb_event_handler(const struct zmk_esb_event *event) {
     switch (event->evt_id) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
+
         zmk_esb_flush_tx();
+        k_work_reschedule(&resend_work, K_MSEC(5));
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
@@ -67,32 +79,32 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
 
 int zmk_2g4_send_keyboard_report(void) {
     struct zmk_hid_keyboard_report *report = zmk_hid_get_keyboard_report();
-    return send_report(ZMK_2G4_MSG_KEYBOARD_REPORT,
-                       (const uint8_t *)&report->body, sizeof(report->body));
+    return send_report(ZMK_2G4_MSG_KEYBOARD_REPORT, (const uint8_t *)&report->body,
+                       sizeof(report->body));
 }
 
 int zmk_2g4_send_consumer_report(void) {
     struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
-    return send_report(ZMK_2G4_MSG_CONSUMER_REPORT,
-                       (const uint8_t *)&report->body, sizeof(report->body));
+    return send_report(ZMK_2G4_MSG_CONSUMER_REPORT, (const uint8_t *)&report->body,
+                       sizeof(report->body));
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
 int zmk_2g4_send_mouse_report(void) {
     struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
-    return send_report(ZMK_2G4_MSG_MOUSE_REPORT,
-                       (const uint8_t *)&report->body, sizeof(report->body));
+    return send_report(ZMK_2G4_MSG_MOUSE_REPORT, (const uint8_t *)&report->body,
+                       sizeof(report->body));
 }
 #endif
 
-bool zmk_2g4_is_ready(void) {
-    return ready;
-}
+bool zmk_2g4_is_ready(void) { return ready; }
 
 int zmk_2g4_start(void) {
     if (ready) {
         return 0;
     }
+
+    k_work_init_delayable(&resend_work, resend_work_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PTX,
@@ -136,6 +148,7 @@ int zmk_2g4_stop(void) {
     }
 
     ready = false;
+    k_work_cancel_delayable(&resend_work);
     zmk_esb_flush_tx();
     zmk_esb_flush_rx();
     zmk_esb_disable();
