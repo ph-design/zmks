@@ -366,8 +366,7 @@ static int endpoints_handle_set(const char *name, size_t len, settings_read_cb r
             return err;
         }
 
-        if (preferred_transport != ZMK_TRANSPORT_USB
-            && preferred_transport != ZMK_TRANSPORT_BLE
+        if (preferred_transport != ZMK_TRANSPORT_USB && preferred_transport != ZMK_TRANSPORT_BLE
 #if IS_ENABLED(CONFIG_ZMK_2G4)
             && preferred_transport != ZMK_TRANSPORT_2G4
 #endif
@@ -471,6 +470,10 @@ static int zmk_endpoints_init(void) {
 #endif
 
     current_instance = get_selected_instance();
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    switch_radio_transport(preferred_transport);
+#endif
 
     return 0;
 }

@@ -26,8 +26,11 @@ LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
 #define PID_MAX 3
 
 #define RETRANSMIT_DELAY_MIN 435
-#define ACK_TIMEOUT_2MBPS 200
-#define ACK_TIMEOUT_1MBPS 350
+
+#define ESB_USE_FAST_RAMP_UP 1
+
+#define ACK_TIMEOUT_2MBPS 150
+#define ACK_TIMEOUT_1MBPS 300
 
 #define ESB_TIMER_IRQ_PRIO 2
 #define ESB_RADIO_IRQ_PRIO 1
@@ -237,6 +240,10 @@ static void configure_radio(void) {
 
     nrf_radio_txpower_set(NRF_RADIO, (nrf_radio_txpower_t)tx_power_dbm);
 
+#if defined(RADIO_MODECNF0_RU_Msk) && ESB_USE_FAST_RAMP_UP
+    nrf_radio_modecnf0_set(NRF_RADIO, true, 0);
+#endif
+
     nrf_radio_base0_set(NRF_RADIO, addr_conv(esb_addr.base_addr_p0));
     nrf_radio_base1_set(NRF_RADIO, addr_conv(esb_addr.base_addr_p1));
     nrf_radio_prefix0_set(NRF_RADIO, bytewise_bit_swap(&esb_addr.pipe_prefixes[0]));
@@ -404,6 +411,7 @@ static void on_disabled_ptx_rx_ack(void) {
         tx_fifo_remove_first();
 
         if (atomic_get(&tx_count) > 0 && esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO) {
+            watchdog_cancel();
             start_tx_transaction();
         } else {
             watchdog_cancel();
@@ -430,6 +438,7 @@ static void on_disabled_ptx_rx_ack(void) {
             tx_fifo_remove_first();
 
             if (atomic_get(&tx_count) > 0 && esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO) {
+                watchdog_cancel();
                 start_tx_transaction();
             } else {
                 watchdog_cancel();
@@ -590,7 +599,7 @@ static void watchdog_handler(struct k_work *work) {
     esb_state = STATE_IDLE;
 }
 
-static void watchdog_start(void) { k_work_schedule(&watchdog_work, K_MSEC(watchdog_timeout_ms)); }
+static void watchdog_start(void) { k_work_reschedule(&watchdog_work, K_MSEC(watchdog_timeout_ms)); }
 
 static void watchdog_cancel(void) { k_work_cancel_delayable(&watchdog_work); }
 
