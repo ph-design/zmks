@@ -305,8 +305,8 @@ endif # ZMK_2G4_DONGLE
 if ZMK_2G4 || ZMK_2G4_DONGLE
 
 config ZMK_2G4_RF_CHANNEL
-    int "RF channel (0-100, legacy fallback)"
-    default 2
+    int "RF channel (0-100)"
+    default 78
     range 0 100
 
 config ZMK_2G4_ADDR_BASE_0

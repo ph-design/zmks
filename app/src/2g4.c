@@ -19,8 +19,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static struct zmk_esb_payload tx_payload;
 static bool ready;
 static struct k_work_delayable sync_work;
-static uint8_t ch_idx;
-static uint8_t consecutive_fails;
 
 static void sync_work_handler(struct k_work *work) {
     if (!ready) {
@@ -35,17 +33,9 @@ static void sync_work_handler(struct k_work *work) {
 static void esb_event_handler(const struct zmk_esb_event *event) {
     switch (event->evt_id) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
-        consecutive_fails = 0;
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
         zmk_esb_flush_tx();
-        consecutive_fails++;
-        if (consecutive_fails >= 3) {
-            ch_idx = (ch_idx + 1) % ZMK_2G4_CHANNEL_COUNT;
-            zmk_esb_set_rf_channel(zmk_2g4_channels[ch_idx]);
-            consecutive_fails = 0;
-            LOG_WRN("2G4 ch hop -> %d", zmk_2g4_channels[ch_idx]);
-        }
         k_work_reschedule(&sync_work, K_MSEC(2));
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
@@ -145,8 +135,7 @@ int zmk_2g4_start(void) {
     uint8_t prefix[] = {CONFIG_ZMK_2G4_ADDR_PREFIX};
     zmk_esb_set_prefixes(prefix, 1);
 
-    ch_idx = 0;
-    zmk_esb_set_rf_channel(zmk_2g4_channels[ch_idx]);
+    zmk_esb_set_rf_channel(CONFIG_ZMK_2G4_RF_CHANNEL);
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ready = true;
