@@ -18,15 +18,22 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static struct zmk_esb_payload tx_payload;
 static bool ready;
-static struct k_work_delayable resend_work;
+static struct k_work_delayable sync_work;
+static uint8_t ch_idx;
+static bool sync_toggle;
 
-static void resend_work_handler(struct k_work *work) {
+static void sync_work_handler(struct k_work *work) {
     if (!ready) {
         return;
     }
 
-    zmk_2g4_send_keyboard_report();
-    zmk_2g4_send_consumer_report();
+    if (sync_toggle) {
+        zmk_2g4_send_keyboard_report();
+    } else {
+        zmk_2g4_send_consumer_report();
+    }
+    sync_toggle = !sync_toggle;
+    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
 }
 
 static void esb_event_handler(const struct zmk_esb_event *event) {
@@ -34,9 +41,10 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
-
         zmk_esb_flush_tx();
-        k_work_reschedule(&resend_work, K_MSEC(5));
+        ch_idx = (ch_idx + 1) % ZMK_2G4_CHANNEL_COUNT;
+        zmk_esb_set_rf_channel(zmk_2g4_channels[ch_idx]);
+        k_work_reschedule(&sync_work, K_MSEC(2));
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
@@ -74,6 +82,7 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
         zmk_esb_flush_tx();
         ret = zmk_esb_write_payload(&tx_payload);
     }
+    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
     return ret;
 }
 
@@ -104,7 +113,7 @@ int zmk_2g4_start(void) {
         return 0;
     }
 
-    k_work_init_delayable(&resend_work, resend_work_handler);
+    k_work_init_delayable(&sync_work, sync_work_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PTX,
@@ -134,10 +143,12 @@ int zmk_2g4_start(void) {
     uint8_t prefix[] = {CONFIG_ZMK_2G4_ADDR_PREFIX};
     zmk_esb_set_prefixes(prefix, 1);
 
-    zmk_esb_set_rf_channel(CONFIG_ZMK_2G4_RF_CHANNEL);
+    ch_idx = 0;
+    zmk_esb_set_rf_channel(zmk_2g4_channels[ch_idx]);
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ready = true;
+    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
     LOG_INF("2.4G transport started");
     return 0;
 }
@@ -148,7 +159,7 @@ int zmk_2g4_stop(void) {
     }
 
     ready = false;
-    k_work_cancel_delayable(&resend_work);
+    k_work_cancel_delayable(&sync_work);
     zmk_esb_flush_tx();
     zmk_esb_flush_rx();
     zmk_esb_disable();
