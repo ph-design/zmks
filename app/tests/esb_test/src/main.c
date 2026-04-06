@@ -61,7 +61,7 @@ int main(void) {
         .event_handler = esb_event_handler,
         .selective_auto_ack = false,
         .retransmit_delay = 600,
-        .retransmit_count = 3,
+        .retransmit_count = 10,
     };
 
     int ret = zmk_esb_init(&cfg);
