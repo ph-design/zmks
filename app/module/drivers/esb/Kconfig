@@ -5,6 +5,7 @@ menuconfig ZMK_ESB
 	bool "ZMK ESB Radio Driver"
 	depends on SOC_SERIES_NRF52X
 	select NRFX_PPI
+	select DYNAMIC_INTERRUPTS
 	help
 	  Enhanced ShockBurst radio driver for nRF52 series.
 	  Supports PTX/PRX with ACK payload.

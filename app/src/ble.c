@@ -680,6 +680,8 @@ static struct bt_conn_auth_info_cb zmk_ble_auth_info_cb_display = {
     .pairing_complete = auth_pairing_complete,
 };
 
+static bool ble_started;
+
 static void zmk_ble_ready(int err) {
     LOG_DBG("ready? %d", err);
     if (err) {
@@ -687,7 +689,43 @@ static void zmk_ble_ready(int err) {
         return;
     }
 
+    ble_started = true;
     update_advertising();
+}
+
+int zmk_ble_stop(void) {
+    if (!ble_started) {
+        return 0;
+    }
+
+    ble_started = false;
+
+    bt_le_adv_stop();
+    advertising_status = ZMK_ADV_NONE;
+
+    int ret = bt_disable();
+    if (ret) {
+        LOG_ERR("bt_disable failed: %d", ret);
+    }
+
+    LOG_INF("BLE stopped");
+    return ret;
+}
+
+int zmk_ble_start(void) {
+    if (ble_started) {
+        return 0;
+    }
+
+    int err = bt_enable(NULL);
+    if (err && err != -EALREADY) {
+        LOG_ERR("bt_enable failed: %d", err);
+        return err;
+    }
+
+    zmk_ble_ready(0);
+    LOG_INF("BLE started");
+    return 0;
 }
 
 static int zmk_ble_complete_startup(void) {

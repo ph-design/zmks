@@ -6,7 +6,9 @@
 
 #pragma once
 
+#if IS_ENABLED(CONFIG_ZMK_BLE)
 #include <zmk/ble.h>
+#endif
 #include <zmk/endpoints_types.h>
 
 /**
@@ -26,6 +28,12 @@
 #define ZMK_ENDPOINT_BLE_COUNT 0
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+#define ZMK_ENDPOINT_2G4_COUNT 1
+#else
+#define ZMK_ENDPOINT_2G4_COUNT 0
+#endif
+
 /**
  * The total number of different (struct zmk_endpoint_instance) values that can
  * be selected.
@@ -33,7 +41,7 @@
  * Note that this value may change between firmware versions, so it should not
  * be used in any persistent storage.
  */
-#define ZMK_ENDPOINT_COUNT (ZMK_ENDPOINT_USB_COUNT + ZMK_ENDPOINT_BLE_COUNT)
+#define ZMK_ENDPOINT_COUNT (ZMK_ENDPOINT_USB_COUNT + ZMK_ENDPOINT_BLE_COUNT + ZMK_ENDPOINT_2G4_COUNT)
 
 bool zmk_endpoint_instance_eq(struct zmk_endpoint_instance a, struct zmk_endpoint_instance b);
 

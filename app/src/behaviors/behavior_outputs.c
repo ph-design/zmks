@@ -42,6 +42,13 @@ static const struct behavior_parameter_value_metadata std_values[] = {
         .type = BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE,
     },
 #endif // IS_ENABLED(CONFIG_ZMK_BLE)
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    {
+        .value = OUT_2G4,
+        .display_name = "2.4G Output",
+        .type = BEHAVIOR_PARAMETER_VALUE_TYPE_VALUE,
+    },
+#endif // IS_ENABLED(CONFIG_ZMK_2G4)
 };
 
 static const struct behavior_parameter_metadata_set std_set = {
@@ -65,6 +72,10 @@ static int on_keymap_binding_pressed(struct zmk_behavior_binding *binding,
         return zmk_endpoints_select_transport(ZMK_TRANSPORT_USB);
     case OUT_BLE:
         return zmk_endpoints_select_transport(ZMK_TRANSPORT_BLE);
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case OUT_2G4:
+        return zmk_endpoints_select_transport(ZMK_TRANSPORT_2G4);
+#endif
     default:
         LOG_ERR("Unknown output command: %d", binding->param1);
     }
