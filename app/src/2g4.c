@@ -19,14 +19,19 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static struct zmk_esb_payload tx_payload;
 static bool ready;
 static struct k_work_delayable sync_work;
+static bool sync_toggle;
 
 static void sync_work_handler(struct k_work *work) {
     if (!ready) {
         return;
     }
 
-    zmk_2g4_send_keyboard_report();
-    zmk_2g4_send_consumer_report();
+    if (sync_toggle) {
+        zmk_2g4_send_keyboard_report();
+    } else {
+        zmk_2g4_send_consumer_report();
+    }
+    sync_toggle = !sync_toggle;
     k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
 }
 

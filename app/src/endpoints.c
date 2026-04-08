@@ -164,7 +164,11 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
 
     preferred_transport = transport;
 
-    endpoints_save_preferred();
+#if IS_ENABLED(CONFIG_SETTINGS)
+    // Radio transport switches must be saved immediately — the 60s debounce
+    // would cause the setting to be lost if the user resets shortly after switching.
+    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
+#endif
 
     update_current_endpoint();
 
