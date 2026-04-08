@@ -18,32 +18,25 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static struct zmk_esb_payload tx_payload;
 static bool ready;
-static struct k_work_delayable sync_work;
-static bool sync_toggle;
+static struct k_work_delayable resend_work;
 
-static void sync_work_handler(struct k_work *work) {
+static void resend_work_handler(struct k_work *work) {
     if (!ready) {
         return;
     }
 
-    if (sync_toggle) {
-        zmk_2g4_send_keyboard_report();
-    } else {
-        zmk_2g4_send_consumer_report();
-    }
-    sync_toggle = !sync_toggle;
-    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
+    zmk_2g4_send_keyboard_report();
+    zmk_2g4_send_consumer_report();
 }
 
 static void esb_event_handler(const struct zmk_esb_event *event) {
     switch (event->evt_id) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
-        LOG_DBG("TX done t=%u", k_uptime_get_32());
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
-        LOG_DBG("TX failed t=%u", k_uptime_get_32());
+
         zmk_esb_flush_tx();
-        k_work_reschedule(&sync_work, K_MSEC(2));
+        k_work_reschedule(&resend_work, K_MSEC(5));
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
@@ -76,14 +69,11 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
     tx_payload.data[0] = report_type;
     memcpy(&tx_payload.data[1], body, MIN(len, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH - 1));
 
-    LOG_DBG("TX enqueue type=0x%02x t=%u", report_type, k_uptime_get_32());
-
     int ret = zmk_esb_write_payload(&tx_payload);
     if (ret == -ENOMEM) {
         zmk_esb_flush_tx();
         ret = zmk_esb_write_payload(&tx_payload);
     }
-    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
     return ret;
 }
 
@@ -114,7 +104,7 @@ int zmk_2g4_start(void) {
         return 0;
     }
 
-    k_work_init_delayable(&sync_work, sync_work_handler);
+    k_work_init_delayable(&resend_work, resend_work_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PTX,
@@ -148,7 +138,6 @@ int zmk_2g4_start(void) {
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ready = true;
-    k_work_reschedule(&sync_work, K_MSEC(CONFIG_ZMK_2G4_SYNC_INTERVAL_MS));
     LOG_INF("2.4G transport started");
     return 0;
 }
@@ -159,7 +148,7 @@ int zmk_2g4_stop(void) {
     }
 
     ready = false;
-    k_work_cancel_delayable(&sync_work);
+    k_work_cancel_delayable(&resend_work);
     zmk_esb_flush_tx();
     zmk_esb_flush_rx();
     zmk_esb_disable();

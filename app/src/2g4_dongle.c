@@ -23,31 +23,11 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static struct k_work rx_work;
-static struct k_work_delayable release_work;
-
-static void release_work_handler(struct k_work *work) {
-    LOG_WRN("2G4 RX timeout — releasing all keys");
-    struct zmk_hid_keyboard_report *kb = zmk_hid_get_keyboard_report();
-    memset(&kb->body, 0, sizeof(kb->body));
-    zmk_usb_hid_send_keyboard_report();
-
-    struct zmk_hid_consumer_report *con = zmk_hid_get_consumer_report();
-    memset(&con->body, 0, sizeof(con->body));
-    zmk_usb_hid_send_consumer_report();
-
-#if IS_ENABLED(CONFIG_ZMK_POINTING)
-    struct zmk_hid_mouse_report *mouse = zmk_hid_get_mouse_report();
-    memset(&mouse->body, 0, sizeof(mouse->body));
-    zmk_usb_hid_send_mouse_report();
-#endif
-}
 
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
     if (rx->length < 2) {
         return;
     }
-
-    k_work_reschedule(&release_work, K_MSEC(CONFIG_ZMK_2G4_DONGLE_RELEASE_TIMEOUT_MS));
 
     switch (rx->data[0]) {
     case ZMK_2G4_MSG_KEYBOARD_REPORT: {
@@ -141,7 +121,6 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 
 static int zmk_2g4_dongle_init(void) {
     k_work_init(&rx_work, rx_work_handler);
-    k_work_init_delayable(&release_work, release_work_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PRX,
