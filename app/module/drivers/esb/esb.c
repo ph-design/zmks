@@ -581,7 +581,7 @@ static void watchdog_handler(struct k_work *work) {
     if (esb_state == STATE_IDLE || esb_state == STATE_UNINIT) {
         return;
     }
-    LOG_WRN("ESB watchdog: state %d stuck, resetting", esb_state);
+    LOG_WRN("ESB watchdog: state %d stuck, RADIO=%u, resetting", esb_state, NRF_RADIO->STATE);
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
 
