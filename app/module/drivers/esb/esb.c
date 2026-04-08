@@ -658,6 +658,9 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
 
     timer_init();
 
+    irq_disable(RADIO_IRQn);
+    radio_clear();
+
     configure_radio();
 
     irq_disable(RADIO_IRQn);
