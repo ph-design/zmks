@@ -315,7 +315,6 @@ static void start_tx_transaction(void) {
 
     nrf_radio_txaddress_set(NRF_RADIO, current_payload->pipe);
     nrf_radio_rxaddresses_set(NRF_RADIO, BIT(current_payload->pipe));
-    nrf_radio_frequency_set(NRF_RADIO, RADIO_BASE_FREQ + esb_addr.rf_channel);
     nrf_radio_packetptr_set(NRF_RADIO, pdu);
 
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);

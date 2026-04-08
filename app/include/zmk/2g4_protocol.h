@@ -21,9 +21,3 @@
 #define ZMK_2G4_ACK_RESOLUTION_MULTIPLIER 0x02
 #define ZMK_2G4_ACK_HOST_CONNECTED 0x03
 #define ZMK_2G4_ACK_STUDIO_RPC_RX 0x10
-
-// Frequency agility channel table
-// Spread across 2.4GHz band, avoiding WiFi channels 1(2412)/6(2437)/11(2462)
-// ch2=2402, ch25=2425, ch50=2450, ch73=2473, ch95=2495
-#define ZMK_2G4_CHANNEL_COUNT 5
-static const uint8_t zmk_2g4_channels[ZMK_2G4_CHANNEL_COUNT] = {2, 25, 50, 73, 95};

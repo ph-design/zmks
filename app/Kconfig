@@ -274,18 +274,13 @@ config ZMK_2G4_TX_POWER
 
 config ZMK_2G4_RETRANSMIT_COUNT
     int "Retransmit count"
-    default 10
+    default 5
     range 0 15
 
 config ZMK_2G4_RETRANSMIT_DELAY
     int "Retransmit delay (us)"
     default 450
     range 435 4000
-
-config ZMK_2G4_SYNC_INTERVAL_MS
-    int "State sync interval (ms)"
-    default 8
-    range 1 100
 
 endif # ZMK_2G4
 
@@ -295,18 +290,13 @@ config ZMK_2G4_DONGLE_INIT_PRIORITY
     int "Dongle init priority"
     default 51
 
-config ZMK_2G4_DONGLE_RELEASE_TIMEOUT_MS
-    int "Release timeout (ms)"
-    default 100
-    range 10 10000
-
 endif # ZMK_2G4_DONGLE
 
 if ZMK_2G4 || ZMK_2G4_DONGLE
 
 config ZMK_2G4_RF_CHANNEL
     int "RF channel (0-100)"
-    default 78
+    default 76
     range 0 100
 
 config ZMK_2G4_ADDR_BASE_0

@@ -23,19 +23,6 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static struct k_work rx_work;
-static struct k_work_delayable release_work;
-
-static void release_work_handler(struct k_work *work) {
-    struct zmk_hid_keyboard_report *kb = zmk_hid_get_keyboard_report();
-    memset(&kb->body, 0, sizeof(kb->body));
-    zmk_usb_hid_send_keyboard_report();
-
-    struct zmk_hid_consumer_report *cs = zmk_hid_get_consumer_report();
-    memset(&cs->body, 0, sizeof(cs->body));
-    zmk_usb_hid_send_consumer_report();
-
-    LOG_WRN("2G4 dongle: no data, releasing all keys");
-}
 
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
     if (rx->length < 2) {
@@ -81,8 +68,6 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         LOG_DBG("Unknown 2G4 message type: 0x%02x", rx->data[0]);
         break;
     }
-
-    k_work_reschedule(&release_work, K_MSEC(CONFIG_ZMK_2G4_DONGLE_RELEASE_TIMEOUT_MS));
 }
 
 static void rx_work_handler(struct k_work *work) {
@@ -136,7 +121,6 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 
 static int zmk_2g4_dongle_init(void) {
     k_work_init(&rx_work, rx_work_handler);
-    k_work_init_delayable(&release_work, release_work_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PRX,
@@ -172,7 +156,7 @@ static int zmk_2g4_dongle_init(void) {
         return ret;
     }
 
-    LOG_INF("2.4G dongle started (ch=%d)", CONFIG_ZMK_2G4_RF_CHANNEL);
+    LOG_INF("2.4G dongle receiver started (ch=%d)", CONFIG_ZMK_2G4_RF_CHANNEL);
     return 0;
 }
 

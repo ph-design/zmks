@@ -37,11 +37,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/event_manager.h>
 #include <zmk/events/ble_active_profile_changed.h>
 
-#if IS_ENABLED(CONFIG_ZMK_2G4)
-#include <hal/nrf_power.h>
-#define ZMK_2G4_BOOT_MAGIC 0x24
-#endif
-
 #if IS_ENABLED(CONFIG_ZMK_BLE_PASSKEY_ENTRY)
 #include <zmk/events/keycode_state_changed.h>
 
@@ -774,16 +769,6 @@ static int zmk_ble_complete_startup(void) {
 }
 
 static int zmk_ble_init(void) {
-#if IS_ENABLED(CONFIG_ZMK_2G4)
-    /* If GPREGRET2 carries the 2G4 boot flag, BLE must NOT start so the
-     * RADIO peripheral remains free for ESB. The flag is set by
-     * zmk_endpoints_select_transport() right before sys_reboot(). */
-    if (NRF_POWER->GPREGRET2 == ZMK_2G4_BOOT_MAGIC) {
-        LOG_INF("2.4G boot mode — skipping BLE init");
-        return 0;
-    }
-#endif
-
     int err = bt_enable(NULL);
 
     if (err < 0 && err != -EALREADY) {

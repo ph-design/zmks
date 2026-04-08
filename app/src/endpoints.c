@@ -6,14 +6,8 @@
 
 #include <zephyr/init.h>
 #include <zephyr/settings/settings.h>
-#include <zephyr/sys/reboot.h>
 
 #include <stdio.h>
-
-#if IS_ENABLED(CONFIG_ZMK_2G4) && IS_ENABLED(CONFIG_ZMK_BLE)
-#include <hal/nrf_power.h>
-#define ZMK_2G4_BOOT_MAGIC 0x24
-#endif
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
 #include <zmk/ble.h>
@@ -129,14 +123,28 @@ int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint) {
 }
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-static void reboot_into_transport(enum zmk_transport transport) {
-    if (transport == ZMK_TRANSPORT_2G4) {
-        NRF_POWER->GPREGRET2 = ZMK_2G4_BOOT_MAGIC;
-    } else {
-        NRF_POWER->GPREGRET2 = 0;
+static int switch_radio_transport(enum zmk_transport new_transport) {
+    if (new_transport == ZMK_TRANSPORT_2G4) {
+        int ret = zmk_ble_stop();
+        if (ret) {
+            LOG_ERR("BLE stop failed: %d", ret);
+            return ret;
+        }
+        ret = zmk_2g4_start();
+        if (ret) {
+            LOG_ERR("2.4G start failed: %d", ret);
+            return ret;
+        }
+    } else if (new_transport == ZMK_TRANSPORT_BLE) {
+        zmk_2g4_stop();
+        int ret = zmk_ble_start();
+        if (ret) {
+            LOG_ERR("BLE start failed: %d", ret);
+            return ret;
+        }
     }
-    LOG_INF("Rebooting into transport %d", transport);
-    sys_reboot(SYS_REBOOT_COLD);
+
+    return 0;
 }
 #endif
 
@@ -147,21 +155,16 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
         return 0;
     }
 
-    enum zmk_transport old = preferred_transport;
-    preferred_transport = transport;
-
-#if IS_ENABLED(CONFIG_SETTINGS)
-    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
-#endif
-
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-
-    bool was_2g4 = (old == ZMK_TRANSPORT_2G4);
-    bool now_2g4 = (transport == ZMK_TRANSPORT_2G4);
-    if (was_2g4 != now_2g4) {
-        reboot_into_transport(transport);
+    int radio_ret = switch_radio_transport(transport);
+    if (radio_ret) {
+        return radio_ret;
     }
 #endif
+
+    preferred_transport = transport;
+
+    endpoints_save_preferred();
 
     update_current_endpoint();
 
@@ -373,20 +376,7 @@ static int endpoints_handle_set(const char *name, size_t len, settings_read_cb r
         }
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-
-        bool ble_skipped = (NRF_POWER->GPREGRET2 == ZMK_2G4_BOOT_MAGIC);
-
-        if (preferred_transport == ZMK_TRANSPORT_2G4) {
-            if (ble_skipped) {
-                zmk_2g4_start();
-            } else {
-                reboot_into_transport(ZMK_TRANSPORT_2G4);
-            }
-        } else {
-            if (ble_skipped) {
-                reboot_into_transport(preferred_transport);
-            }
-        }
+        switch_radio_transport(preferred_transport);
 #endif
 
         update_current_endpoint();
@@ -480,6 +470,10 @@ static int zmk_endpoints_init(void) {
 #endif
 
     current_instance = get_selected_instance();
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    switch_radio_transport(preferred_transport);
+#endif
 
     return 0;
 }
