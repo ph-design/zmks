@@ -21,6 +21,7 @@
 LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
 
 #include <zmk/esb.h>
+#include <zmk/ble_hardware.h>
 
 #define RADIO_BASE_FREQ 2400UL
 #define PID_MAX 3
@@ -296,6 +297,8 @@ static void start_tx_transaction(void) {
         esb_state = STATE_IDLE;
         return;
     }
+
+    zmk_ble_hardware_control(false);
 
     current_payload = &tx_fifo_buf[tx_front];
     struct esb_pdu *pdu = (struct esb_pdu *)tx_buf;
@@ -581,6 +584,9 @@ static void watchdog_handler(struct k_work *work) {
     LOG_WRN("ESB watchdog: state %d stuck, resetting", esb_state);
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
+
+    zmk_ble_hardware_control(false);
+
     nrf_radio_shorts_set(NRF_RADIO, 0);
     nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
     nrf_timer_task_trigger(esb_timer_inst, NRF_TIMER_TASK_STOP);
@@ -657,14 +663,6 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     memset(ack_pl_pending, 0, sizeof(ack_pl_pending));
 
     timer_init();
-
-    irq_disable(RADIO_IRQn);
-
-    nrf_ppi_channels_disable(NRF_PPI, 0xFFFFF);
-    NRF_TIMER0->TASKS_STOP = 1;
-    NRF_TIMER0->TASKS_CLEAR = 1;
-    NRF_TIMER1->TASKS_STOP = 1;
-    NRF_TIMER1->TASKS_CLEAR = 1;
 
     radio_clear();
 
