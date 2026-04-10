@@ -21,7 +21,6 @@
 LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
 
 #include <zmk/esb.h>
-#include <zmk/ble_hardware.h>
 
 #define RADIO_BASE_FREQ 2400UL
 #define PID_MAX 3
@@ -298,7 +297,22 @@ static void start_tx_transaction(void) {
         return;
     }
 
-    zmk_ble_hardware_control(false);
+    if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
+        LOG_WRN("RADIO not disabled (state=%u) before TX, forcing", NRF_RADIO->STATE);
+        nrf_radio_shorts_set(NRF_RADIO, 0);
+        nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
+        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
+        uint32_t t = 0;
+        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
+            if (++t > 10000) {
+                LOG_ERR("RADIO disable timeout, deferring TX");
+                esb_state = STATE_IDLE;
+                return;
+            }
+            k_busy_wait(1);
+        }
+        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    }
 
     current_payload = &tx_fifo_buf[tx_front];
     struct esb_pdu *pdu = (struct esb_pdu *)tx_buf;
@@ -584,8 +598,6 @@ static void watchdog_handler(struct k_work *work) {
     LOG_WRN("ESB watchdog: state %d stuck, RADIO=%u, resetting", esb_state, NRF_RADIO->STATE);
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
-
-    zmk_ble_hardware_control(false);
 
     nrf_radio_shorts_set(NRF_RADIO, 0);
     nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);

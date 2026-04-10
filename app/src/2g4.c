@@ -20,6 +20,9 @@ static struct zmk_esb_payload tx_payload;
 static bool ready;
 static struct k_work_delayable resend_work;
 
+#define ZMK_2G4_MAX_CONSEC_FAILURES 10
+static uint8_t consec_fail_count;
+
 static void resend_work_handler(struct k_work *work) {
     if (!ready) {
         return;
@@ -32,11 +35,16 @@ static void resend_work_handler(struct k_work *work) {
 static void esb_event_handler(const struct zmk_esb_event *event) {
     switch (event->evt_id) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
+        consec_fail_count = 0;
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
-
         zmk_esb_flush_tx();
-        k_work_reschedule(&resend_work, K_MSEC(5));
+        if (++consec_fail_count < ZMK_2G4_MAX_CONSEC_FAILURES) {
+            k_work_reschedule(&resend_work, K_MSEC(5));
+        } else {
+            LOG_WRN("2.4G: %d consecutive TX failures, dongle unreachable",
+                    consec_fail_count);
+        }
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
@@ -62,6 +70,8 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
     if (!ready) {
         return -ENODEV;
     }
+
+    consec_fail_count = 0;
 
     tx_payload.pipe = 0;
     tx_payload.noack = false;

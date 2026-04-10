@@ -130,6 +130,7 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
             LOG_ERR("BLE stop failed: %d", ret);
             return ret;
         }
+        k_msleep(50);
         ret = zmk_2g4_start();
         if (ret) {
             LOG_ERR("2.4G start failed: %d", ret);
