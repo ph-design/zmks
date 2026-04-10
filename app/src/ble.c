@@ -62,6 +62,7 @@ enum advertising_type {
 
 static struct zmk_ble_profile profiles[ZMK_BLE_PROFILE_COUNT];
 static uint8_t active_profile;
+static bool ble_started;
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -683,8 +684,6 @@ static struct bt_conn_auth_cb zmk_ble_auth_cb_display = {
 static struct bt_conn_auth_info_cb zmk_ble_auth_info_cb_display = {
     .pairing_complete = auth_pairing_complete,
 };
-
-static bool ble_started;
 
 static void zmk_ble_ready(int err) {
     LOG_DBG("ready? %d", err);
