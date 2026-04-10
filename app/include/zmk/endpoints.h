@@ -78,15 +78,6 @@ struct zmk_endpoint_instance zmk_endpoints_selected(void);
 
 int zmk_endpoints_send_report(uint16_t usage_page);
 
-#define ZMK_WIRELESS_MODE_BLE 0
-#define ZMK_WIRELESS_MODE_2G4 1
-
-enum zmk_transport zmk_endpoints_get_wireless_transport(void);
-#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-uint8_t zmk_endpoints_get_wireless_mode(void);
-int zmk_endpoints_set_wireless_mode(uint8_t mode);
-#endif
-
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
 int zmk_endpoints_send_mouse_report();
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)

@@ -16,8 +16,6 @@
 #include <nrfx_timer.h>
 #include <nrfx_ppi.h>
 
-#include <cmsis_core.h>
-
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
@@ -99,8 +97,6 @@ static struct k_work evt_work;
 static struct k_work_delayable watchdog_work;
 
 static void (*on_radio_disabled)(void);
-static uintptr_t saved_radio_isr;
-static uintptr_t saved_timer_isr;
 
 static struct {
     uint8_t base_addr_p0[4];
@@ -299,6 +295,23 @@ static void start_tx_transaction(void) {
     if (atomic_get(&tx_count) == 0) {
         esb_state = STATE_IDLE;
         return;
+    }
+
+    if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
+        LOG_WRN("RADIO not disabled (state=%u) before TX, forcing", NRF_RADIO->STATE);
+        nrf_radio_shorts_set(NRF_RADIO, 0);
+        nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
+        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
+        uint32_t t = 0;
+        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
+            if (++t > 10000) {
+                LOG_ERR("RADIO disable timeout, deferring TX");
+                esb_state = STATE_IDLE;
+                return;
+            }
+            k_busy_wait(1);
+        }
+        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     }
 
     current_payload = &tx_fifo_buf[tx_front];
@@ -618,37 +631,6 @@ static void radio_clear(void) {
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
 }
 
-static void vtor_set_isr(IRQn_Type irqn, void (*isr)(void), uintptr_t *saved) {
-    uint32_t *vectors = (uint32_t *)SCB->VTOR;
-    uint32_t idx = (uint32_t)irqn + 16;
-    if (saved) {
-        *saved = vectors[idx];
-    }
-    vectors[idx] = (uint32_t)isr;
-    __DSB();
-    __ISB();
-}
-
-static void vtor_restore_isr(IRQn_Type irqn, uintptr_t saved) {
-    if (!saved) {
-        return;
-    }
-    uint32_t *vectors = (uint32_t *)SCB->VTOR;
-    vectors[(uint32_t)irqn + 16] = (uint32_t)saved;
-    __DSB();
-    __ISB();
-}
-
-static void radio_isr_wrapper(void) {
-    radio_isr(NULL);
-    z_arm_int_exit();
-}
-
-static void timer_isr_wrapper(void) {
-    timer_isr(NULL);
-    z_arm_int_exit();
-}
-
 int zmk_esb_init(const struct zmk_esb_config *config) {
     if (!config || !config->event_handler) {
         return -EINVAL;
@@ -701,10 +683,8 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     irq_disable(RADIO_IRQn);
     irq_disable(esb_timer_irqn);
 
-    vtor_set_isr(RADIO_IRQn, radio_isr_wrapper, &saved_radio_isr);
-    vtor_set_isr(esb_timer_irqn, timer_isr_wrapper, &saved_timer_isr);
-    NVIC_SetPriority(RADIO_IRQn, ESB_RADIO_IRQ_PRIO);
-    NVIC_SetPriority(esb_timer_irqn, ESB_TIMER_IRQ_PRIO);
+    irq_connect_dynamic(RADIO_IRQn, ESB_RADIO_IRQ_PRIO, radio_isr, NULL, 0);
+    irq_connect_dynamic(esb_timer_irqn, ESB_TIMER_IRQ_PRIO, timer_isr, NULL, 0);
 
     irq_enable(esb_timer_irqn);
 
@@ -724,11 +704,6 @@ void zmk_esb_disable(void) {
 
     irq_disable(RADIO_IRQn);
     irq_disable(esb_timer_irqn);
-
-    vtor_restore_isr(RADIO_IRQn, saved_radio_isr);
-    vtor_restore_isr(esb_timer_irqn, saved_timer_isr);
-    saved_radio_isr = 0;
-    saved_timer_isr = 0;
 
     watchdog_cancel();
     on_radio_disabled = NULL;

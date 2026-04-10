@@ -12,7 +12,6 @@
 #include <zmk/hid.h>
 #include <zmk/2g4.h>
 #include <zmk/2g4_protocol.h>
-#include <zmk/endpoints.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -110,13 +109,7 @@ int zmk_2g4_send_mouse_report(void) {
 
 bool zmk_2g4_is_ready(void) { return ready; }
 
-static int zmk_2g4_init(void) {
-#if IS_ENABLED(CONFIG_ZMK_BLE)
-    if (zmk_endpoints_get_wireless_mode() != ZMK_WIRELESS_MODE_2G4) {
-        return 0;
-    }
-#endif
-
+int zmk_2g4_start(void) {
     if (ready) {
         return 0;
     }
@@ -159,4 +152,16 @@ static int zmk_2g4_init(void) {
     return 0;
 }
 
-SYS_INIT(zmk_2g4_init, APPLICATION, 60);
+int zmk_2g4_stop(void) {
+    if (!ready) {
+        return 0;
+    }
+
+    ready = false;
+    k_work_cancel_delayable(&resend_work);
+    zmk_esb_flush_tx();
+    zmk_esb_flush_rx();
+    zmk_esb_disable();
+    LOG_INF("2.4G transport stopped");
+    return 0;
+}
