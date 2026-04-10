@@ -66,7 +66,6 @@ enum advertising_type {
 
 static struct zmk_ble_profile profiles[ZMK_BLE_PROFILE_COUNT];
 static uint8_t active_profile;
-static bool ble_initialized;
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -186,10 +185,6 @@ int update_advertising(void) {
     struct bt_conn *conn;
     enum advertising_type desired_adv = ZMK_ADV_NONE;
 
-    if (!ble_initialized) {
-        return 0;
-    }
-
     if (zmk_ble_active_profile_is_open()) {
         desired_adv = ZMK_ADV_CONN;
     } else if (!zmk_ble_active_profile_is_connected()) {
@@ -234,9 +229,6 @@ static void update_advertising_callback(struct k_work *work) { update_advertisin
 K_WORK_DEFINE(update_advertising_work, update_advertising_callback);
 
 static void clear_profile_bond(uint8_t profile) {
-    if (!ble_initialized) {
-        return;
-    }
     if (bt_addr_le_cmp(&profiles[profile].peer, BT_ADDR_LE_ANY)) {
         bt_unpair(BT_ID_DEFAULT, &profiles[profile].peer);
         set_profile_address(profile, BT_ADDR_LE_ANY);
@@ -329,9 +321,6 @@ int zmk_ble_prof_prev(void) {
 };
 
 int zmk_ble_prof_disconnect(uint8_t index) {
-    if (!ble_initialized)
-        return -ENOTSUP;
-
     if (index >= ZMK_BLE_PROFILE_COUNT)
         return -ERANGE;
 
@@ -355,10 +344,6 @@ int zmk_ble_prof_disconnect(uint8_t index) {
 bt_addr_le_t *zmk_ble_active_profile_addr(void) { return &profiles[active_profile].peer; }
 
 struct bt_conn *zmk_ble_active_profile_conn(void) {
-    if (!ble_initialized) {
-        return NULL;
-    }
-
     struct bt_conn *conn;
     bt_addr_le_t *addr = zmk_ble_active_profile_addr();
 
@@ -376,9 +361,6 @@ struct bt_conn *zmk_ble_active_profile_conn(void) {
 char *zmk_ble_active_profile_name(void) { return profiles[active_profile].name; }
 
 int zmk_ble_set_device_name(char *name) {
-    if (!ble_initialized) {
-        return -ENOTSUP;
-    }
     // Copy new name to advertising parameters
     int err = bt_set_name(name);
     LOG_DBG("New device name: %s", name);
@@ -709,7 +691,6 @@ static void zmk_ble_ready(int err) {
         return;
     }
 
-    ble_initialized = true;
     update_advertising();
 }
 
