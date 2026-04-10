@@ -37,6 +37,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/event_manager.h>
 #include <zmk/events/ble_active_profile_changed.h>
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+#include <hal/nrf_radio.h>
+#include <nrfx.h>
+#endif
+
 #if IS_ENABLED(CONFIG_ZMK_BLE_PASSKEY_ENTRY)
 #include <zmk/events/keycode_state_changed.h>
 
@@ -713,6 +718,36 @@ int zmk_ble_stop(void) {
         LOG_ERR("bt_disable failed: %d", ret);
     }
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    irq_disable(RADIO_IRQn);
+    irq_disable(TIMER0_IRQn);
+    irq_disable(RTC0_IRQn);
+
+    NRF_PPI->CHENCLR = 0xFFFFFFFF;
+
+    NRF_TIMER0->TASKS_STOP = 1;
+    NRF_TIMER0->TASKS_CLEAR = 1;
+    NRF_TIMER0->EVENTS_COMPARE[0] = 0;
+    NRF_TIMER0->EVENTS_COMPARE[1] = 0;
+
+    NRF_RTC0->TASKS_STOP = 1;
+    NRF_RTC0->TASKS_CLEAR = 1;
+    NRF_RTC0->EVENTS_COMPARE[0] = 0;
+
+    NRF_CCM->ENABLE = 0;
+    NRF_AAR->ENABLE = 0;
+
+    nrf_radio_shorts_set(NRF_RADIO, 0);
+    nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
+        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
+        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
+        }
+    }
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+#endif
+
     LOG_INF("BLE stopped");
     return 0;
 }
@@ -721,6 +756,11 @@ int zmk_ble_start(void) {
     if (ble_started) {
         return 0;
     }
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    irq_enable(TIMER0_IRQn);
+    irq_enable(RTC0_IRQn);
+#endif
 
     int err = bt_enable(NULL);
     if (err && err != -EALREADY) {
