@@ -23,6 +23,10 @@
 #include "peripheral.h"
 #include "service.h"
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zmk/endpoints.h>
+#endif
+
 #if IS_ENABLED(CONFIG_SETTINGS)
 
 #include <zephyr/settings/settings.h>
@@ -264,6 +268,12 @@ static struct settings_handler ble_peripheral_settings_handler = {
 #endif // IS_ENABLED(CONFIG_SETTINGS)
 
 static int zmk_peripheral_ble_init(void) {
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    if (zmk_endpoints_get_wireless_mode() == ZMK_WIRELESS_MODE_2G4) {
+        return 0;
+    }
+#endif
+
     int err = bt_enable(NULL);
 
     if (err) {
