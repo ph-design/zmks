@@ -38,8 +38,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/ble_active_profile_changed.h>
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
-#include <hal/nrf_radio.h>
-#include <nrfx.h>
+#include <zmk/endpoints.h>
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_BLE_PASSKEY_ENTRY)
@@ -67,7 +66,6 @@ enum advertising_type {
 
 static struct zmk_ble_profile profiles[ZMK_BLE_PROFILE_COUNT];
 static uint8_t active_profile;
-static bool ble_started;
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -186,10 +184,6 @@ int update_advertising(void) {
     bt_addr_le_t *addr;
     struct bt_conn *conn;
     enum advertising_type desired_adv = ZMK_ADV_NONE;
-
-    if (!ble_started) {
-        return 0;
-    }
 
     if (zmk_ble_active_profile_is_open()) {
         desired_adv = ZMK_ADV_CONN;
@@ -697,80 +691,7 @@ static void zmk_ble_ready(int err) {
         return;
     }
 
-    ble_started = true;
     update_advertising();
-}
-
-int zmk_ble_stop(void) {
-    if (!ble_started) {
-        return 0;
-    }
-
-    ble_started = false;
-
-    k_work_cancel(&update_advertising_work);
-
-    bt_le_adv_stop();
-    advertising_status = ZMK_ADV_NONE;
-
-    int ret = bt_disable();
-    if (ret) {
-        LOG_ERR("bt_disable failed: %d", ret);
-    }
-
-#if IS_ENABLED(CONFIG_ZMK_2G4)
-    irq_disable(RADIO_IRQn);
-    irq_disable(TIMER0_IRQn);
-    irq_disable(RTC0_IRQn);
-
-    NRF_PPI->CHENCLR = 0xFFFFFFFF;
-
-    NRF_TIMER0->TASKS_STOP = 1;
-    NRF_TIMER0->TASKS_CLEAR = 1;
-    NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-    NRF_TIMER0->EVENTS_COMPARE[1] = 0;
-
-    NRF_RTC0->TASKS_STOP = 1;
-    NRF_RTC0->TASKS_CLEAR = 1;
-    NRF_RTC0->EVENTS_COMPARE[0] = 0;
-
-    NRF_CCM->ENABLE = 0;
-    NRF_AAR->ENABLE = 0;
-
-    nrf_radio_shorts_set(NRF_RADIO, 0);
-    nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-    if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
-        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
-        }
-    }
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-#endif
-
-    LOG_INF("BLE stopped");
-    return 0;
-}
-
-int zmk_ble_start(void) {
-    if (ble_started) {
-        return 0;
-    }
-
-#if IS_ENABLED(CONFIG_ZMK_2G4)
-    irq_enable(TIMER0_IRQn);
-    irq_enable(RTC0_IRQn);
-#endif
-
-    int err = bt_enable(NULL);
-    if (err && err != -EALREADY) {
-        LOG_ERR("bt_enable failed: %d", err);
-        return err;
-    }
-
-    zmk_ble_ready(0);
-    LOG_INF("BLE started");
-    return 0;
 }
 
 static int zmk_ble_complete_startup(void) {
@@ -814,6 +735,12 @@ static int zmk_ble_complete_startup(void) {
 }
 
 static int zmk_ble_init(void) {
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    if (zmk_endpoints_get_wireless_mode() == ZMK_WIRELESS_MODE_2G4) {
+        return 0;
+    }
+#endif
+
     int err = bt_enable(NULL);
 
     if (err < 0 && err != -EALREADY) {
@@ -844,11 +771,6 @@ static bool zmk_ble_numeric_usage_to_value(const zmk_key_t key, const zmk_key_t 
 }
 
 static int zmk_ble_handle_key_user(struct zmk_keycode_state_changed *event) {
-    /* BLE is not the active transport; do not attempt passkey handling. */
-    if (!ble_started) {
-        return ZMK_EV_EVENT_BUBBLE;
-    }
-
     zmk_key_t key = event->keycode;
 
     LOG_DBG("key %d", key);
