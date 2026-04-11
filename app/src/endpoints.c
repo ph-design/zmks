@@ -52,7 +52,7 @@ static void endpoints_save_preferred_work(struct k_work *work) {
 static struct k_work_delayable endpoints_save_work;
 #endif
 
-#if !(IS_ENABLED(CONFIG_SETTINGS) && IS_ENABLED(CONFIG_ZMK_2G4))
+#if !(IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4))
 static int endpoints_save_preferred(void) {
 #if IS_ENABLED(CONFIG_SETTINGS)
     return k_work_reschedule(&endpoints_save_work, K_MSEC(CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE));
@@ -125,8 +125,17 @@ int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint) {
 }
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+
+static void save_preferred_now(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    k_work_cancel_delayable(&endpoints_save_work);
+    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
+#endif
+}
+
 static int switch_radio_transport(enum zmk_transport new_transport) {
     if (new_transport == ZMK_TRANSPORT_2G4) {
+        save_preferred_now();
         int ret = zmk_ble_stop();
         if (ret) {
             LOG_ERR("BLE stop failed: %d", ret);
@@ -139,6 +148,7 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
             return ret;
         }
     } else if (new_transport == ZMK_TRANSPORT_BLE) {
+        save_preferred_now();
         zmk_2g4_stop();
         int ret = zmk_ble_start();
         if (ret) {
@@ -153,23 +163,17 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
 
 int zmk_endpoints_select_transport(enum zmk_transport transport) {
     LOG_DBG("Selected endpoint transport %d", transport);
-
     if (preferred_transport == transport) {
         return 0;
     }
+
+    preferred_transport = transport;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
     int radio_ret = switch_radio_transport(transport);
     if (radio_ret) {
         return radio_ret;
     }
-#endif
-
-    preferred_transport = transport;
-
-#if IS_ENABLED(CONFIG_SETTINGS) && IS_ENABLED(CONFIG_ZMK_2G4)
-    k_work_cancel_delayable(&endpoints_save_work);
-    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
 #else
     endpoints_save_preferred();
 #endif
