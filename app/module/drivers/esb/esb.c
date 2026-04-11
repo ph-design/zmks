@@ -68,6 +68,7 @@ struct pipe_info {
 static volatile enum esb_state esb_state = STATE_UNINIT;
 static struct zmk_esb_config esb_cfg;
 static zmk_esb_event_handler_t evt_handler;
+static uint32_t original_vtor;
 
 static struct zmk_esb_payload tx_fifo_buf[CONFIG_ZMK_ESB_TX_FIFO_SIZE];
 static uint32_t tx_front, tx_back;
@@ -686,6 +687,17 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     irq_connect_dynamic(RADIO_IRQn, ESB_RADIO_IRQ_PRIO, radio_isr, NULL, 0);
     irq_connect_dynamic(esb_timer_irqn, ESB_TIMER_IRQ_PRIO, timer_isr, NULL, 0);
 
+    extern void _isr_wrapper(void);
+#define VECTOR_TABLE_ENTRIES (16 + 48)
+    static uint32_t ram_vector_table[VECTOR_TABLE_ENTRIES] __attribute__((aligned(256)));
+
+    original_vtor = SCB->VTOR;
+    memcpy(ram_vector_table, (uint32_t *)original_vtor, sizeof(ram_vector_table));
+    ram_vector_table[RADIO_IRQn + 16] = (uint32_t)_isr_wrapper;
+    SCB->VTOR = (uint32_t)ram_vector_table;
+    __DSB();
+    __ISB();
+
     irq_enable(esb_timer_irqn);
 
     esb_state = STATE_IDLE;
@@ -712,6 +724,9 @@ void zmk_esb_disable(void) {
     radio_clear();
 
     nrfx_ppi_channel_free(ppi_ch_timer_disable);
+    SCB->VTOR = original_vtor;
+    __DSB();
+    __ISB();
 
     esb_state = STATE_UNINIT;
     LOG_INF("ESB disabled");
