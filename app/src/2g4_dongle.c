@@ -22,8 +22,6 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-static struct k_work rx_work;
-
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
     if (rx->length < 2) {
         return;
@@ -70,18 +68,15 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
     }
 }
 
-static void rx_work_handler(struct k_work *work) {
-    struct zmk_esb_payload rx;
-    while (zmk_esb_read_rx_payload(&rx) == 0) {
-        process_rx_payload(&rx);
-    }
-}
-
 static void esb_event_handler(const struct zmk_esb_event *event) {
     switch (event->evt_id) {
-    case ZMK_ESB_EVENT_RX_RECEIVED:
-        k_work_submit(&rx_work);
+    case ZMK_ESB_EVENT_RX_RECEIVED: {
+        struct zmk_esb_payload rx;
+        while (zmk_esb_read_rx_payload(&rx) == 0) {
+            process_rx_payload(&rx);
+        }
         break;
+    }
     case ZMK_ESB_EVENT_TX_SUCCESS:
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
@@ -120,8 +115,6 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 #endif /* CONFIG_ZMK_HID_INDICATORS */
 
 static int zmk_2g4_dongle_init(void) {
-    k_work_init(&rx_work, rx_work_handler);
-
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PRX,
         .bitrate = ZMK_ESB_BITRATE_2MBPS,

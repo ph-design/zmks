@@ -40,7 +40,7 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
     case ZMK_ESB_EVENT_TX_FAILED:
         zmk_esb_flush_tx();
         if (++consec_fail_count < ZMK_2G4_MAX_CONSEC_FAILURES) {
-            k_work_reschedule(&resend_work, K_MSEC(5));
+            k_work_reschedule(&resend_work, K_MSEC(1));
         } else {
             LOG_WRN("2.4G: %d consecutive TX failures, dongle unreachable",
                     consec_fail_count);
