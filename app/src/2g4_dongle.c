@@ -10,6 +10,7 @@
 
 #include <zmk/esb.h>
 #include <zmk/hid.h>
+#include <zmk/usb.h>
 #include <zmk/usb_hid.h>
 #include <zmk/2g4_protocol.h>
 
@@ -22,16 +23,27 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+static const uint8_t zero_report[32];
+
+static bool report_is_release(const uint8_t *body, size_t len) {
+    return memcmp(body, zero_report, len) == 0;
+}
+
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
     if (rx->length < 2) {
         return;
     }
+
+    bool usb_suspended = (zmk_usb_get_status() == USB_DC_SUSPEND);
 
     switch (rx->data[0]) {
     case ZMK_2G4_MSG_KEYBOARD_REPORT: {
         struct zmk_hid_keyboard_report *report = zmk_hid_get_keyboard_report();
         size_t body_len = MIN(rx->length - 1, sizeof(report->body));
         memcpy(&report->body, &rx->data[1], body_len);
+        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+            break;
+        }
         int err = zmk_usb_hid_send_keyboard_report();
         if (err) {
             LOG_WRN("USB keyboard report send failed: %d", err);
@@ -42,6 +54,9 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
         size_t body_len = MIN(rx->length - 1, sizeof(report->body));
         memcpy(&report->body, &rx->data[1], body_len);
+        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+            break;
+        }
         int err = zmk_usb_hid_send_consumer_report();
         if (err) {
             LOG_WRN("USB consumer report send failed: %d", err);
@@ -53,6 +68,9 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
         size_t body_len = MIN(rx->length - 1, sizeof(report->body));
         memcpy(&report->body, &rx->data[1], body_len);
+        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+            break;
+        }
         int err = zmk_usb_hid_send_mouse_report();
         if (err) {
             LOG_WRN("USB mouse report send failed: %d", err);

@@ -609,6 +609,8 @@ static void watchdog_handler(struct k_work *work) {
     while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
     }
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    NVIC_ClearPendingIRQ(RADIO_IRQn);
+    NVIC_ClearPendingIRQ(esb_timer_irqn);
 
     if (current_payload && esb_cfg.mode == ZMK_ESB_MODE_PTX) {
         last_tx_attempts = esb_cfg.retransmit_count + 1;
@@ -677,12 +679,23 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
 
     timer_init();
 
+    on_radio_disabled = NULL;
     radio_clear();
+
+    // Clear residual radio events from BLE before configuring ESB
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_READY);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_PAYLOAD);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCOK);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCERROR);
 
     configure_radio();
 
     irq_disable(RADIO_IRQn);
     irq_disable(esb_timer_irqn);
+    NVIC_ClearPendingIRQ(RADIO_IRQn);
+    NVIC_ClearPendingIRQ(esb_timer_irqn);
 
     irq_connect_dynamic(RADIO_IRQn, ESB_RADIO_IRQ_PRIO, radio_isr, NULL, 0);
     irq_connect_dynamic(esb_timer_irqn, ESB_TIMER_IRQ_PRIO, timer_isr, NULL, 0);

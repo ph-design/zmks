@@ -52,6 +52,7 @@ static void endpoints_save_preferred_work(struct k_work *work) {
 static struct k_work_delayable endpoints_save_work;
 #endif
 
+#if !(IS_ENABLED(CONFIG_SETTINGS) && IS_ENABLED(CONFIG_ZMK_2G4))
 static int endpoints_save_preferred(void) {
 #if IS_ENABLED(CONFIG_SETTINGS)
     return k_work_reschedule(&endpoints_save_work, K_MSEC(CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE));
@@ -59,6 +60,7 @@ static int endpoints_save_preferred(void) {
     return 0;
 #endif
 }
+#endif
 
 bool zmk_endpoint_instance_eq(struct zmk_endpoint_instance a, struct zmk_endpoint_instance b) {
     if (a.transport != b.transport) {
@@ -165,7 +167,12 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
 
     preferred_transport = transport;
 
+#if IS_ENABLED(CONFIG_SETTINGS) && IS_ENABLED(CONFIG_ZMK_2G4)
+    k_work_cancel_delayable(&endpoints_save_work);
+    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
+#else
     endpoints_save_preferred();
+#endif
 
     update_current_endpoint();
 
