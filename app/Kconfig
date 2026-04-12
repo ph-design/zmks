@@ -319,6 +319,15 @@ config ZMK_2G4_ADDR_PREFIX
     hex "Pipe 0 prefix"
     default 0x4E  # 'N'  ("PHDSN")
 
+config ZMK_2G4_AES_KEY
+    string "AES-128 encryption key (32 hex chars)"
+    default ""
+    help
+      16-byte AES-128 key as 32 hex characters for 2.4G link encryption.
+      Both keyboard and dongle must use the same key.
+      Leave empty to disable encryption.
+      Example: "0123456789abcdef0123456789abcdef"
+
 endif # ZMK_2G4 || ZMK_2G4_DONGLE
 
 endmenu # Output Types

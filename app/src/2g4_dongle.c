@@ -13,6 +13,7 @@
 #include <zmk/usb.h>
 #include <zmk/usb_hid.h>
 #include <zmk/2g4_protocol.h>
+#include <zmk/2g4_crypto.h>
 
 #if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
 #include <zmk/hid_indicators_types.h>
@@ -34,14 +35,21 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         return;
     }
 
+    uint8_t buf[CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH];
+    memcpy(buf, rx->data, rx->length);
+    int dec_len = zmk_2g4_crypto_decrypt(buf, rx->length);
+    if (dec_len < 1) {
+        return;
+    }
+
     bool usb_suspended = (zmk_usb_get_status() == USB_DC_SUSPEND);
 
-    switch (rx->data[0]) {
+    switch (buf[0]) {
     case ZMK_2G4_MSG_KEYBOARD_REPORT: {
         struct zmk_hid_keyboard_report *report = zmk_hid_get_keyboard_report();
-        size_t body_len = MIN(rx->length - 1, sizeof(report->body));
-        memcpy(&report->body, &rx->data[1], body_len);
-        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        memcpy(&report->body, &buf[1], body_len);
+        if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;
         }
         int err = zmk_usb_hid_send_keyboard_report();
@@ -52,9 +60,9 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
     }
     case ZMK_2G4_MSG_CONSUMER_REPORT: {
         struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
-        size_t body_len = MIN(rx->length - 1, sizeof(report->body));
-        memcpy(&report->body, &rx->data[1], body_len);
-        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        memcpy(&report->body, &buf[1], body_len);
+        if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;
         }
         int err = zmk_usb_hid_send_consumer_report();
@@ -66,9 +74,9 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
     case ZMK_2G4_MSG_MOUSE_REPORT: {
         struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
-        size_t body_len = MIN(rx->length - 1, sizeof(report->body));
-        memcpy(&report->body, &rx->data[1], body_len);
-        if (usb_suspended && report_is_release(&rx->data[1], body_len)) {
+        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        memcpy(&report->body, &buf[1], body_len);
+        if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;
         }
         int err = zmk_usb_hid_send_mouse_report();
@@ -81,7 +89,7 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
     case ZMK_2G4_MSG_KEEP_ALIVE:
         break;
     default:
-        LOG_DBG("Unknown 2G4 message type: 0x%02x", rx->data[0]);
+        LOG_DBG("Unknown 2G4 message type: 0x%02x", buf[0]);
         break;
     }
 }

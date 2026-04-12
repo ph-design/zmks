@@ -12,6 +12,7 @@
 #include <zmk/hid.h>
 #include <zmk/2g4.h>
 #include <zmk/2g4_protocol.h>
+#include <zmk/2g4_crypto.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -77,6 +78,13 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
     tx_payload.length = len + 1;
     tx_payload.data[0] = report_type;
     memcpy(&tx_payload.data[1], body, MIN(len, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH - 1));
+
+    int enc_len = zmk_2g4_crypto_encrypt(tx_payload.data, len + 1,
+                                         CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
+    if (enc_len < 0) {
+        return enc_len;
+    }
+    tx_payload.length = enc_len;
 
     int ret = zmk_esb_write_payload(&tx_payload);
     if (ret == -ENOMEM) {

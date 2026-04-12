@@ -41,6 +41,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static struct zmk_endpoint_instance current_instance = {};
 static enum zmk_transport preferred_transport =
     ZMK_TRANSPORT_USB; /* Used if multiple endpoints are ready */
+static bool session_transport_selected; /* true after user manually switches transport */
 
 static void update_current_endpoint(void);
 
@@ -154,7 +155,9 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
 
 int zmk_endpoints_select_transport(enum zmk_transport transport) {
     LOG_DBG("Selected endpoint transport %d", transport);
+    session_transport_selected = true;
     if (preferred_transport == transport) {
+        update_current_endpoint();
         return 0;
     }
 
@@ -425,12 +428,12 @@ static enum zmk_transport get_selected_transport(void) {
 
     if (ready_count > 1) {
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-        if (usb) {
-            LOG_DBG("USB connected, preferring USB");
+        if (usb && !session_transport_selected) {
+            LOG_DBG("USB connected, auto-preferring USB (no manual switch yet)");
             return ZMK_TRANSPORT_USB;
         }
 #endif
-        LOG_DBG("Multiple endpoint transports are ready. Using %d", preferred_transport);
+        LOG_DBG("Multiple transports ready. Using preferred: %d", preferred_transport);
         return preferred_transport;
     }
 
