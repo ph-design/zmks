@@ -42,6 +42,10 @@ static struct zmk_endpoint_instance current_instance = {};
 static enum zmk_transport preferred_transport =
     ZMK_TRANSPORT_USB; /* Used if multiple endpoints are ready */
 
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+static bool session_transport_selected = false;
+#endif
+
 static void update_current_endpoint(void);
 
 #if IS_ENABLED(CONFIG_SETTINGS)
@@ -161,14 +165,14 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
     preferred_transport = transport;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-#if IS_ENABLED(CONFIG_SETTINGS)
-    k_work_cancel_delayable(&endpoints_save_work);
-    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
-#endif
+    session_transport_selected = true;
     int radio_ret = switch_radio_transport(transport);
     if (radio_ret) {
         return radio_ret;
     }
+#if IS_ENABLED(CONFIG_SETTINGS)
+    k_work_reschedule(&endpoints_save_work, K_MSEC(100));
+#endif
 #else
     endpoints_save_preferred();
 #endif
@@ -424,6 +428,12 @@ static enum zmk_transport get_selected_transport(void) {
     int ready_count = (usb ? 1 : 0) + (ble ? 1 : 0) + (dongle ? 1 : 0);
 
     if (ready_count > 1) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+        if (usb && !session_transport_selected) {
+            LOG_DBG("USB connected on boot, preferring USB");
+            return ZMK_TRANSPORT_USB;
+        }
+#endif
         LOG_DBG("Multiple endpoint transports are ready. Using %d", preferred_transport);
         return preferred_transport;
     }
@@ -498,10 +508,9 @@ static void update_current_endpoint(void) {
     struct zmk_endpoint_instance new_instance = get_selected_instance();
 
     if (!zmk_endpoint_instance_eq(new_instance, current_instance)) {
-        // Cancel all current keypresses so keys don't stay held on the old endpoint.
-        zmk_endpoints_clear_current();
 
         current_instance = new_instance;
+        zmk_endpoints_clear_current();
 
         char endpoint_str[ZMK_ENDPOINT_STR_LEN];
         zmk_endpoint_instance_to_str(current_instance, endpoint_str, sizeof(endpoint_str));
