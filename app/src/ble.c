@@ -713,11 +713,6 @@ int zmk_ble_stop(void) {
     bt_le_adv_stop();
     advertising_status = ZMK_ADV_NONE;
 
-    int ret = bt_disable();
-    if (ret) {
-        LOG_ERR("bt_disable failed: %d", ret);
-    }
-
 #if IS_ENABLED(CONFIG_ZMK_2G4)
     irq_disable(RADIO_IRQn);
     irq_disable(TIMER0_IRQn);
@@ -758,10 +753,21 @@ int zmk_ble_start(void) {
     }
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
-    irq_enable(TIMER0_IRQn);
-    irq_enable(RTC0_IRQn);
-#endif
+    NVIC_ClearPendingIRQ(RADIO_IRQn);
+    NVIC_ClearPendingIRQ(RTC0_IRQn);
+    NVIC_ClearPendingIRQ(TIMER0_IRQn);
 
+    irq_enable(RADIO_IRQn);
+    irq_enable(RTC0_IRQn);
+    irq_enable(TIMER0_IRQn);
+
+    NRF_RTC0->TASKS_START = 1;
+
+    ble_started = true;
+    update_advertising();
+    LOG_INF("BLE started");
+    return 0;
+#else
     int err = bt_enable(NULL);
     if (err && err != -EALREADY) {
         LOG_ERR("bt_enable failed: %d", err);
@@ -771,6 +777,7 @@ int zmk_ble_start(void) {
     zmk_ble_ready(0);
     LOG_INF("BLE started");
     return 0;
+#endif
 }
 
 static int zmk_ble_complete_startup(void) {
