@@ -126,16 +126,8 @@ int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint) {
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
 
-static void save_preferred_now(void) {
-#if IS_ENABLED(CONFIG_SETTINGS)
-    k_work_cancel_delayable(&endpoints_save_work);
-    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
-#endif
-}
-
 static int switch_radio_transport(enum zmk_transport new_transport) {
     if (new_transport == ZMK_TRANSPORT_2G4) {
-        save_preferred_now();
         int ret = zmk_ble_stop();
         if (ret) {
             LOG_ERR("BLE stop failed: %d", ret);
@@ -148,7 +140,6 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
             return ret;
         }
     } else if (new_transport == ZMK_TRANSPORT_BLE) {
-        save_preferred_now();
         zmk_2g4_stop();
         int ret = zmk_ble_start();
         if (ret) {
@@ -170,6 +161,10 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
     preferred_transport = transport;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#if IS_ENABLED(CONFIG_SETTINGS)
+    k_work_cancel_delayable(&endpoints_save_work);
+    settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
+#endif
     int radio_ret = switch_radio_transport(transport);
     if (radio_ret) {
         return radio_ret;
@@ -387,10 +382,6 @@ static int endpoints_handle_set(const char *name, size_t len, settings_read_cb r
             preferred_transport = DEFAULT_TRANSPORT;
         }
 
-#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-        switch_radio_transport(preferred_transport);
-#endif
-
         update_current_endpoint();
     }
 
@@ -483,12 +474,14 @@ static int zmk_endpoints_init(void) {
 
     current_instance = get_selected_instance();
 
-#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-    switch_radio_transport(preferred_transport);
-#endif
-
     return 0;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+int zmk_endpoints_apply_preferred_transport(void) {
+    return switch_radio_transport(preferred_transport);
+}
+#endif
 
 void zmk_endpoints_clear_current(void) {
     zmk_hid_keyboard_clear();

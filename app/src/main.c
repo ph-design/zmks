@@ -9,6 +9,10 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/settings/settings.h>
 
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zmk/endpoints.h>
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -25,6 +29,10 @@ int main(void) {
 #if IS_ENABLED(CONFIG_SETTINGS)
     settings_subsys_init();
     settings_load();
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    zmk_endpoints_apply_preferred_transport();
 #endif
 
 #ifdef CONFIG_ZMK_DISPLAY
