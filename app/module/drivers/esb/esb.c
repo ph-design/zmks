@@ -754,6 +754,7 @@ int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
     if (!payload) {
         return -EINVAL;
     }
+    hfclk_start();
     if (payload->length == 0 || payload->length > CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH) {
         return -EMSGSIZE;
     }
