@@ -70,6 +70,9 @@ bool zmk_2g4_crypto_enabled(void) { return key_valid; }
 uint32_t zmk_2g4_crypto_tx_session_id(void) { return tx_session_id; }
 
 static int ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
+    __ASSERT_NO_MSG(nonce != NULL);
+    __ASSERT_NO_MSG(out != NULL);
+
     memcpy(&ecb_block[16], nonce, AES_BLOCK_SIZE);
 
     NRF_ECB->ECBDATAPTR = (uint32_t)ecb_block;
@@ -93,6 +96,12 @@ static int ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
 }
 
 static int aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, size_t len) {
+    __ASSERT_NO_MSG(data != NULL);
+
+    if (len == 0) {
+        return 0;
+    }
+
     uint8_t nonce[AES_BLOCK_SIZE] = {0};
     uint8_t ks[AES_BLOCK_SIZE];
 
@@ -128,6 +137,9 @@ static int aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, siz
 }
 
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
+    __ASSERT_NO_MSG(data != NULL);
+    __ASSERT_NO_MSG(buf_size >= HEADER_SIZE);
+
     if (!key_valid) {
         return (int)len;
     }
@@ -155,6 +167,8 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
 }
 
 int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
+    __ASSERT_NO_MSG(data != NULL);
+
     if (!key_valid) {
         return (int)len;
     }

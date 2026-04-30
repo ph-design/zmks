@@ -284,6 +284,15 @@ config ZMK_2G4_RETRANSMIT_DELAY
     default 500
     range 500 1000
 
+config ZMK_2G4_MAX_CONSEC_FAILURES
+    int "Max consecutive TX failures before link considered lost"
+    default 40
+    range 3 200
+    help
+      Number of consecutive TX failures (including no-ACK keepalive) before
+      the keyboard considers the 2.4G link down and stops retrying.
+      At 250ms keepalive interval, 40 = 10 seconds.
+
 endif # ZMK_2G4
 
 if ZMK_2G4_DONGLE
