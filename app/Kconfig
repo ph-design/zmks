@@ -252,12 +252,14 @@ config ZMK_2G4
     depends on (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
     depends on SOC_SERIES_NRF52X || SOC_NRF5340_CPUAPP
     select ZMK_ESB
+    select ENTROPY_GENERATOR
 
 config ZMK_2G4_DONGLE
     bool "Dongle PRX"
     depends on ZMK_USB
     depends on SOC_SERIES_NRF52X || SOC_NRF5340_CPUAPP
     select ZMK_ESB
+    select ENTROPY_GENERATOR
 
 endchoice
 

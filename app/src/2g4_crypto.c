@@ -29,7 +29,7 @@ static uint32_t rx_session_id;
 static uint32_t rx_counter;
 static bool rx_session_init;
 
-/* ECB block layout: key(16) | plaintext(16) | ciphertext(16), 4-byte aligned for NRF_ECB */
+// ECB block layout
 static uint8_t ecb_block[48] __aligned(4);
 
 static int parse_hex_key(void) {
@@ -69,7 +69,7 @@ bool zmk_2g4_crypto_enabled(void) { return key_valid; }
 
 uint32_t zmk_2g4_crypto_tx_session_id(void) { return tx_session_id; }
 
-static void ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
+static int ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
     memcpy(&ecb_block[16], nonce, AES_BLOCK_SIZE);
 
     NRF_ECB->ECBDATAPTR = (uint32_t)ecb_block;
@@ -77,13 +77,22 @@ static void ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
     NRF_ECB->EVENTS_ERRORECB = 0;
     NRF_ECB->TASKS_STARTECB = 1;
 
-    while (!NRF_ECB->EVENTS_ENDECB && !NRF_ECB->EVENTS_ERRORECB) {
+    // ECB calibrated poll
+    if (!WAIT_FOR(NRF_ECB->EVENTS_ENDECB || NRF_ECB->EVENTS_ERRORECB, 100, k_busy_wait(1))) {
+        LOG_ERR("ECB timeout");
+        return -ETIMEDOUT;
+    }
+
+    if (NRF_ECB->EVENTS_ERRORECB) {
+        LOG_ERR("ECB error (easyDMA)");
+        return -EIO;
     }
 
     memcpy(out, &ecb_block[32], AES_BLOCK_SIZE);
+    return 0;
 }
 
-static void aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, size_t len) {
+static int aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, size_t len) {
     uint8_t nonce[AES_BLOCK_SIZE] = {0};
     uint8_t ks[AES_BLOCK_SIZE];
 
@@ -91,22 +100,29 @@ static void aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, si
     sys_put_le32(counter, nonce + 4);
 
     /* Block 0 */
-    ecb_encrypt(nonce, ks);
+    int ret = ecb_encrypt(nonce, ks);
+    if (ret) {
+        return ret;
+    }
     size_t n = MIN(len, AES_BLOCK_SIZE);
     for (size_t i = 0; i < n; i++) {
         data[i] ^= ks[i];
     }
 
     if (len <= AES_BLOCK_SIZE) {
-        return;
+        return 0;
     }
 
-    /* Block 1 */
     nonce[15] = 1;
-    ecb_encrypt(nonce, ks);
+    ret = ecb_encrypt(nonce, ks);
+    if (ret) {
+        return ret;
+    }
     for (size_t i = 0; i < len - AES_BLOCK_SIZE; i++) {
         data[AES_BLOCK_SIZE + i] ^= ks[i];
     }
+
+    return 0;
 }
 
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
@@ -122,7 +138,11 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     memmove(data + HEADER_SIZE, data, len);
     sys_put_le32(tx_session_id, data);
     sys_put_le32(ctr, data + SESSION_ID_SIZE);
-    aes_ctr_xor(tx_session_id, ctr, data + HEADER_SIZE, len);
+    int ret = aes_ctr_xor(tx_session_id, ctr, data + HEADER_SIZE, len);
+    if (ret) {
+        tx_counter--;
+        return ret;
+    }
 
     return (int)(len + HEADER_SIZE);
 }
@@ -146,12 +166,15 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     }
 
     size_t payload_len = len - HEADER_SIZE;
-    aes_ctr_xor(session_id, ctr, data + HEADER_SIZE, payload_len);
+    int ret = aes_ctr_xor(session_id, ctr, data + HEADER_SIZE, payload_len);
+    if (ret) {
+        return ret;
+    }
     memmove(data, data + HEADER_SIZE, payload_len);
 
     if (new_session) {
-        LOG_INF("2.4G new session 0x%08x (was 0x%08x), rx_counter %u -> %u",
-                session_id, rx_session_id, rx_counter, ctr);
+        LOG_INF("2.4G new session 0x%08x (was 0x%08x), rx_counter %u -> %u", session_id,
+                rx_session_id, rx_counter, ctr);
         rx_session_id = session_id;
         rx_session_init = true;
     }

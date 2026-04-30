@@ -14,6 +14,7 @@
 
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/ring_buffer.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/hci.h>
@@ -737,8 +738,8 @@ int zmk_ble_stop(void) {
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
         nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
-        }
+        (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
+                       100, k_busy_wait(1));
     }
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
 #endif

@@ -7,6 +7,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/irq.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 
 #include <hal/nrf_radio.h>
 #include <hal/nrf_timer.h>
@@ -606,7 +607,9 @@ static void watchdog_handler(struct k_work *work) {
     nrf_timer_int_disable(esb_timer_inst, 0xFFFFFFFF);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
+    if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
+                  100, k_busy_wait(1))) {
+        LOG_ERR("Watchdog: RADIO disable timed out");
     }
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     NVIC_ClearPendingIRQ(RADIO_IRQn);
@@ -629,8 +632,8 @@ static void radio_clear(void) {
     nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
-    }
+    (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
+                   100, k_busy_wait(1));
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
 }
 
