@@ -279,8 +279,8 @@ config ZMK_2G4_RETRANSMIT_COUNT
 
 config ZMK_2G4_RETRANSMIT_DELAY
     int "Retransmit delay (us)"
-    default 450
-    range 435 4000
+    default 500
+    range 500 1000
 
 endif # ZMK_2G4
 
