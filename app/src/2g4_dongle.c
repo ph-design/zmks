@@ -30,15 +30,40 @@ static bool report_is_release(const uint8_t *body, size_t len) {
     return memcmp(body, zero_report, len) == 0;
 }
 
+#define ZMK_2G4_KB_TIMEOUT_MS 500
+
+static bool kb_connected;
+static uint32_t rx_total;
+static uint32_t rx_decrypt_fail;
+static struct k_work_delayable kb_lost_work;
+
+static void kb_lost_handler(struct k_work *work) {
+    if (kb_connected) {
+        kb_connected = false;
+        LOG_INF("2.4G keyboard lost (rx_total=%u, decrypt_fail=%u)", rx_total, rx_decrypt_fail);
+    }
+}
+
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
     if (rx->length < 2) {
         return;
     }
 
+    rx_total++;
+    if (!kb_connected) {
+        kb_connected = true;
+        LOG_INF("2.4G keyboard connected (rf_len=%u, total=%u)", rx->length, rx_total);
+    }
+    k_work_reschedule(&kb_lost_work, K_MSEC(ZMK_2G4_KB_TIMEOUT_MS));
+
     uint8_t buf[CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH];
     memcpy(buf, rx->data, rx->length);
     int dec_len = zmk_2g4_crypto_decrypt(buf, rx->length);
     if (dec_len < 1) {
+        rx_decrypt_fail++;
+        if (dec_len != -EACCES) {
+            LOG_WRN("2.4G decrypt failed: ret=%d rf_len=%u", dec_len, rx->length);
+        }
         return;
     }
 
@@ -141,6 +166,8 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 #endif /* CONFIG_ZMK_HID_INDICATORS */
 
 static int zmk_2g4_dongle_init(void) {
+    k_work_init_delayable(&kb_lost_work, kb_lost_handler);
+
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PRX,
         .bitrate = ZMK_ESB_BITRATE_2MBPS,
