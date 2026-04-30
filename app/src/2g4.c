@@ -22,8 +22,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static struct zmk_esb_payload tx_payload;
 static bool ready;
 static struct k_work_delayable resend_work;
+static struct k_work_delayable keepalive_work;
 
-#define ZMK_2G4_MAX_CONSEC_FAILURES 10
+#define ZMK_2G4_KEEPALIVE_MS 250
 static uint8_t consec_fail_count;
 
 static void resend_work_handler(struct k_work *work) {
@@ -33,6 +34,27 @@ static void resend_work_handler(struct k_work *work) {
 
     zmk_2g4_send_keyboard_report();
     zmk_2g4_send_consumer_report();
+}
+
+static void keepalive_handler(struct k_work *work) {
+    if (!ready) {
+        return;
+    }
+
+    tx_payload.pipe = 0;
+    tx_payload.noack = false;
+    tx_payload.data[0] = ZMK_2G4_MSG_KEEP_ALIVE;
+
+    int enc_len =
+        zmk_2g4_crypto_encrypt(tx_payload.data, 1, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
+    if (enc_len < 0) {
+        return;
+    }
+    tx_payload.length = enc_len;
+
+    zmk_esb_write_payload(&tx_payload);
+
+    k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
 }
 
 static void esb_event_handler(const struct zmk_esb_event *event) {
@@ -93,6 +115,10 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
         zmk_esb_flush_tx();
         ret = zmk_esb_write_payload(&tx_payload);
     }
+
+    /* Push keepalive deadline forward on every report */
+    k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
+
     return ret;
 }
 
@@ -146,6 +172,7 @@ int zmk_2g4_start(void) {
     }
 
     k_work_init_delayable(&resend_work, resend_work_handler);
+    k_work_init_delayable(&keepalive_work, keepalive_handler);
 
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PTX,
@@ -182,6 +209,10 @@ int zmk_2g4_start(void) {
     LOG_INF("2.4G transport started");
 
     send_boot_announcement();
+
+    /* Start periodic keepalive to prevent dongle timeout */
+    k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
+
     return 0;
 }
 
@@ -192,6 +223,7 @@ int zmk_2g4_stop(void) {
 
     ready = false;
     k_work_cancel_delayable(&resend_work);
+    k_work_cancel_delayable(&keepalive_work);
     zmk_esb_flush_tx();
     zmk_esb_flush_rx();
     zmk_esb_disable();

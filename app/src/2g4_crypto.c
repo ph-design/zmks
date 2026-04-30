@@ -98,6 +98,7 @@ static int aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, siz
 
     sys_put_le32(session_id, nonce);
     sys_put_le32(counter, nonce + 4);
+    sys_put_le32(0, nonce + 8); /* block index 0 */
 
     /* Block 0 */
     int ret = ecb_encrypt(nonce, ks);
@@ -113,7 +114,8 @@ static int aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, siz
         return 0;
     }
 
-    nonce[15] = 1;
+    /* Block 1 */
+    sys_put_le32(1, nonce + 8); /* block index 1 */
     ret = ecb_encrypt(nonce, ks);
     if (ret) {
         return ret;
@@ -131,6 +133,11 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     }
     if (len + HEADER_SIZE > buf_size) {
         return -ENOMEM;
+    }
+
+    if (tx_counter == 0xFFFFFFFFu) {
+        LOG_ERR("TX counter exhausted, re-key required");
+        return -ERANGE;
     }
 
     uint32_t ctr = tx_counter++;
@@ -160,7 +167,7 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
 
     bool new_session = !rx_session_init || (session_id != rx_session_id);
 
-    if (!new_session && ctr <= rx_counter) {
+    if (!new_session && (int32_t)(ctr - rx_counter) <= 0) {
         LOG_WRN("2.4G replay: got %u, last %u (session 0x%08x)", ctr, rx_counter, session_id);
         return -EACCES;
     }
