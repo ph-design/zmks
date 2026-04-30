@@ -6,6 +6,7 @@
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 #include <string.h>
 
 #include <zmk/esb.h>
@@ -111,6 +112,16 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         break;
     }
 #endif
+    case ZMK_2G4_MSG_BOOT: {
+        if (dec_len >= 1 + 8) {
+            uint32_t reason = sys_get_le32(&buf[1]);
+            uint32_t session = sys_get_le32(&buf[5]);
+            LOG_INF("Keyboard BOOT: reset_reason=0x%08x session=0x%08x", reason, session);
+        } else {
+            LOG_INF("Keyboard BOOT (truncated, dec_len=%d)", dec_len);
+        }
+        break;
+    }
     case ZMK_2G4_MSG_KEEP_ALIVE:
         break;
     default:

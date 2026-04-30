@@ -6,6 +6,8 @@
 
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/hwinfo.h>
+#include <zephyr/sys/byteorder.h>
 #include <string.h>
 
 #include <zmk/esb.h>
@@ -79,8 +81,8 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
     tx_payload.data[0] = report_type;
     memcpy(&tx_payload.data[1], body, MIN(len, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH - 1));
 
-    int enc_len = zmk_2g4_crypto_encrypt(tx_payload.data, len + 1,
-                                         CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
+    int enc_len =
+        zmk_2g4_crypto_encrypt(tx_payload.data, len + 1, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
     if (enc_len < 0) {
         return enc_len;
     }
@@ -113,6 +115,28 @@ int zmk_2g4_send_mouse_report(void) {
                        sizeof(report->body));
 }
 #endif
+
+static int send_boot_announcement(void) {
+    uint32_t reset_cause = 0;
+    int hr = hwinfo_get_reset_cause(&reset_cause);
+    if (hr == 0) {
+        // Clear so a subsequent boot reads a fresh cause
+        (void)hwinfo_clear_reset_cause();
+    } else {
+        LOG_WRN("hwinfo_get_reset_cause failed: %d", hr);
+        reset_cause = 0xFFFFFFFFu;
+    }
+
+    // Body: reset_cause
+    uint8_t body[8];
+    sys_put_le32(reset_cause, body);
+    sys_put_le32(zmk_2g4_crypto_tx_session_id(), body + 4);
+
+    int ret = send_report(ZMK_2G4_MSG_BOOT, body, sizeof(body));
+    LOG_INF("2.4G BOOT sent: reason=0x%08x session=0x%08x ret=%d", reset_cause,
+            zmk_2g4_crypto_tx_session_id(), ret);
+    return ret;
+}
 
 bool zmk_2g4_is_ready(void) { return ready; }
 
@@ -156,6 +180,8 @@ int zmk_2g4_start(void) {
 
     ready = true;
     LOG_INF("2.4G transport started");
+
+    send_boot_announcement();
     return 0;
 }
 

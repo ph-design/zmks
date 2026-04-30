@@ -7,6 +7,7 @@
 #include <string.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/random/random.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <hal/nrf_ecb.h>
@@ -16,12 +17,17 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define AES_BLOCK_SIZE 16
-#define CTR_PREFIX_SIZE 4
+#define SESSION_ID_SIZE 4
+#define CTR_SIZE 4
+#define HEADER_SIZE (SESSION_ID_SIZE + CTR_SIZE)
 
 static const char *key_hex = CONFIG_ZMK_2G4_AES_KEY;
 static bool key_valid;
+static uint32_t tx_session_id;
 static uint32_t tx_counter;
+static uint32_t rx_session_id;
 static uint32_t rx_counter;
+static bool rx_session_init;
 
 /* ECB block layout: key(16) | plaintext(16) | ciphertext(16), 4-byte aligned for NRF_ECB */
 static uint8_t ecb_block[48] __aligned(4);
@@ -47,13 +53,21 @@ static int zmk_2g4_crypto_init(void) {
         return -EINVAL;
     }
     key_valid = true;
-    LOG_INF("2.4G AES-128 encryption enabled");
+
+    /* Random per-boot session id; 0 reserved as "unset" */
+    do {
+        tx_session_id = sys_rand32_get();
+    } while (tx_session_id == 0);
+
+    LOG_INF("2.4G AES-128 enabled (tx_session=0x%08x)", tx_session_id);
     return 0;
 }
 
 SYS_INIT(zmk_2g4_crypto_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 bool zmk_2g4_crypto_enabled(void) { return key_valid; }
+
+uint32_t zmk_2g4_crypto_tx_session_id(void) { return tx_session_id; }
 
 static void ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
     memcpy(&ecb_block[16], nonce, AES_BLOCK_SIZE);
@@ -69,11 +83,12 @@ static void ecb_encrypt(const uint8_t nonce[16], uint8_t out[16]) {
     memcpy(out, &ecb_block[32], AES_BLOCK_SIZE);
 }
 
-static void aes_ctr_xor(uint32_t counter, uint8_t *data, size_t len) {
+static void aes_ctr_xor(uint32_t session_id, uint32_t counter, uint8_t *data, size_t len) {
     uint8_t nonce[AES_BLOCK_SIZE] = {0};
     uint8_t ks[AES_BLOCK_SIZE];
 
-    sys_put_le32(counter, nonce);
+    sys_put_le32(session_id, nonce);
+    sys_put_le32(counter, nonce + 4);
 
     /* Block 0 */
     ecb_encrypt(nonce, ks);
@@ -98,38 +113,49 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     if (!key_valid) {
         return (int)len;
     }
-    if (len + CTR_PREFIX_SIZE > buf_size) {
+    if (len + HEADER_SIZE > buf_size) {
         return -ENOMEM;
     }
 
     uint32_t ctr = tx_counter++;
 
-    memmove(data + CTR_PREFIX_SIZE, data, len);
-    sys_put_le32(ctr, data);
-    aes_ctr_xor(ctr, data + CTR_PREFIX_SIZE, len);
+    memmove(data + HEADER_SIZE, data, len);
+    sys_put_le32(tx_session_id, data);
+    sys_put_le32(ctr, data + SESSION_ID_SIZE);
+    aes_ctr_xor(tx_session_id, ctr, data + HEADER_SIZE, len);
 
-    return (int)(len + CTR_PREFIX_SIZE);
+    return (int)(len + HEADER_SIZE);
 }
 
 int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     if (!key_valid) {
         return (int)len;
     }
-    if (len <= CTR_PREFIX_SIZE) {
+    if (len <= HEADER_SIZE) {
         return -EINVAL;
     }
 
-    uint32_t ctr = sys_get_le32(data);
+    uint32_t session_id = sys_get_le32(data);
+    uint32_t ctr = sys_get_le32(data + SESSION_ID_SIZE);
 
-    if (ctr <= rx_counter && rx_counter != 0) {
-        LOG_WRN("2.4G replay: got %u, last %u", ctr, rx_counter);
+    bool new_session = !rx_session_init || (session_id != rx_session_id);
+
+    if (!new_session && ctr <= rx_counter) {
+        LOG_WRN("2.4G replay: got %u, last %u (session 0x%08x)", ctr, rx_counter, session_id);
         return -EACCES;
     }
-    rx_counter = ctr;
 
-    size_t payload_len = len - CTR_PREFIX_SIZE;
-    aes_ctr_xor(ctr, data + CTR_PREFIX_SIZE, payload_len);
-    memmove(data, data + CTR_PREFIX_SIZE, payload_len);
+    size_t payload_len = len - HEADER_SIZE;
+    aes_ctr_xor(session_id, ctr, data + HEADER_SIZE, payload_len);
+    memmove(data, data + HEADER_SIZE, payload_len);
+
+    if (new_session) {
+        LOG_INF("2.4G new session 0x%08x (was 0x%08x), rx_counter %u -> %u",
+                session_id, rx_session_id, rx_counter, ctr);
+        rx_session_id = session_id;
+        rx_session_init = true;
+    }
+    rx_counter = ctr;
 
     return (int)payload_len;
 }
