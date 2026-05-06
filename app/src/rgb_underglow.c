@@ -537,7 +537,6 @@ static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
 /*  Layer Overlay (applied on top of every effect)                           */
 /* ========================================================================= */
 
-#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
 static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
     struct zmk_led_hsb hsb = state.color;
     return (struct led_rgb){
@@ -547,6 +546,37 @@ static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
     };
 }
 
+static int find_led_for_key_pos(uint8_t key_pos) {
+    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
+        if ((uint8_t)rgb_pixel_lookup(i) == key_pos) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void zmk_rgb_underglow_apply_status_overlay(uint8_t top_layer) {
+    uint8_t key_pos;
+    uint32_t color;
+
+    if (zmk_capslock_indicator_resolve(top_layer, &key_pos, &color) && color > 0) {
+        int led_idx = find_led_for_key_pos(key_pos);
+        if (led_idx >= 0) {
+            pixels[led_idx] = hex_to_rgb_overlay((color & 0xFF0000) >> 16,
+                                                 (color & 0xFF00) >> 8, color & 0xFF);
+        }
+    }
+
+    if (zmk_connection_indicator_resolve(top_layer, &key_pos, &color) && color > 0) {
+        int led_idx = find_led_for_key_pos(key_pos);
+        if (led_idx >= 0) {
+            pixels[led_idx] = hex_to_rgb_overlay((color & 0xFF0000) >> 16,
+                                                 (color & 0xFF00) >> 8, color & 0xFF);
+        }
+    }
+}
+
+#if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
 static void zmk_rgb_underglow_apply_layer_overlay(void) {
 #if IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
     if (!zmk_rgb_layer_is_enabled()) {
@@ -610,9 +640,9 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
     }
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
-    /* Apply layer color overlay on top of the rendered effect */
     zmk_rgb_underglow_apply_layer_overlay();
 #endif
+    zmk_rgb_underglow_apply_status_overlay(rgb_underglow_top_layer());
 
     int err = led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
     if (err < 0) {

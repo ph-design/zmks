@@ -47,11 +47,29 @@ int zmk_rgb_layer_settings_reset(void);
 bool zmk_rgb_layer_is_enabled(void);
 int zmk_rgb_layer_set_enabled(bool enabled);
 
-/* CapsLock indicator runtime configuration */
+
+#define ZMK_STATUS_INDICATOR_ANY_LAYER 0xFF
+
 int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_t *on_color,
-                                     uint8_t *key_pos);
+                                     uint8_t *key_pos, uint8_t *layer_id);
 int zmk_capslock_indicator_set_enabled(bool enabled);
 int zmk_capslock_indicator_set_off_color(uint32_t color);
 int zmk_capslock_indicator_set_on_color(uint32_t color);
+int zmk_capslock_indicator_set_key_pos(uint8_t key_pos);
+int zmk_capslock_indicator_set_layer_id(uint8_t layer_id);
 int zmk_capslock_indicator_save(void);
 int zmk_capslock_indicator_settings_reset(void);
+
+int zmk_connection_indicator_get_state(bool *enabled, uint32_t *usb_color, uint32_t *bt_color,
+                                       uint8_t *key_pos, uint8_t *layer_id);
+int zmk_connection_indicator_set_enabled(bool enabled);
+int zmk_connection_indicator_set_usb_color(uint32_t color);
+int zmk_connection_indicator_set_bt_color(uint32_t color);
+int zmk_connection_indicator_set_key_pos(uint8_t key_pos);
+int zmk_connection_indicator_set_layer_id(uint8_t layer_id);
+int zmk_connection_indicator_save(void);
+int zmk_connection_indicator_settings_reset(void);
+
+bool zmk_capslock_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos, uint32_t *out_color);
+bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
+                                      uint32_t *out_color);

@@ -297,11 +297,17 @@ static zmk_studio_Response save_layer_led_state(const zmk_studio_Request *req) {
      * on next boot and discard the devicetree colors. */
     bool caps_en;
     uint32_t caps_off, caps_on;
-    uint8_t caps_pos;
-    zmk_capslock_indicator_get_state(&caps_en, &caps_off, &caps_on, &caps_pos);
-    if (caps_off != 0 || caps_on != 0 || !caps_en) {
+    uint8_t caps_pos, caps_layer;
+    zmk_capslock_indicator_get_state(&caps_en, &caps_off, &caps_on, &caps_pos, &caps_layer);
+    if (caps_off != 0 || caps_on != 0 || !caps_en ||
+        caps_layer != ZMK_STATUS_INDICATOR_ANY_LAYER || caps_pos != 0) {
         ret |= zmk_capslock_indicator_save();
     }
+
+    /* Always persist connection indicator state if it has been touched. The
+     * indicator is disabled by default, so a save call here is harmless when
+     * the user has not configured it. */
+    ret |= zmk_connection_indicator_save();
     return LIGHTING_RESPONSE(save_layer_led_state, ret == 0);
 }
 
@@ -323,23 +329,20 @@ ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_layer_led_binding, ZMK_STUDIO_RPC_HANDLE
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, save_layer_led_state, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_layer_led_enabled, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
-/* ------------------------------------------------------------------ */
-/*  CapsLock Indicator RPC handlers                                   */
-/* ------------------------------------------------------------------ */
-
 static zmk_studio_Response get_caps_lock_indicator(const zmk_studio_Request *req) {
     LOG_DBG("");
 
     bool enabled;
     uint32_t off_color, on_color;
-    uint8_t key_pos;
-    zmk_capslock_indicator_get_state(&enabled, &off_color, &on_color, &key_pos);
+    uint8_t key_pos, layer_id;
+    zmk_capslock_indicator_get_state(&enabled, &off_color, &on_color, &key_pos, &layer_id);
 
     zmk_lighting_CapsLockIndicatorState resp = zmk_lighting_CapsLockIndicatorState_init_zero;
     resp.enabled = enabled;
     resp.off_color = off_color;
     resp.on_color = on_color;
     resp.key_position = key_pos;
+    resp.layer_id = layer_id;
 
     return LIGHTING_RESPONSE(get_caps_lock_indicator, resp);
 }
@@ -361,6 +364,12 @@ static zmk_studio_Response set_caps_lock_indicator(const zmk_studio_Request *req
     case zmk_lighting_SetCapsLockIndicatorRequest_on_color_tag:
         ret = zmk_capslock_indicator_set_on_color(r->field.on_color);
         break;
+    case zmk_lighting_SetCapsLockIndicatorRequest_key_position_tag:
+        ret = zmk_capslock_indicator_set_key_pos((uint8_t)r->field.key_position);
+        break;
+    case zmk_lighting_SetCapsLockIndicatorRequest_layer_id_tag:
+        ret = zmk_capslock_indicator_set_layer_id((uint8_t)r->field.layer_id);
+        break;
     default:
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
@@ -374,6 +383,61 @@ static zmk_studio_Response set_caps_lock_indicator(const zmk_studio_Request *req
 
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, get_caps_lock_indicator, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_caps_lock_indicator, ZMK_STUDIO_RPC_HANDLER_SECURED);
+
+static zmk_studio_Response get_connection_indicator(const zmk_studio_Request *req) {
+    LOG_DBG("");
+
+    bool enabled;
+    uint32_t usb_color, bt_color;
+    uint8_t key_pos, layer_id;
+    zmk_connection_indicator_get_state(&enabled, &usb_color, &bt_color, &key_pos, &layer_id);
+
+    zmk_lighting_ConnectionIndicatorState resp = zmk_lighting_ConnectionIndicatorState_init_zero;
+    resp.enabled = enabled;
+    resp.usb_color = usb_color;
+    resp.bt_color = bt_color;
+    resp.key_position = key_pos;
+    resp.layer_id = layer_id;
+
+    return LIGHTING_RESPONSE(get_connection_indicator, resp);
+}
+
+static zmk_studio_Response set_connection_indicator(const zmk_studio_Request *req) {
+    LOG_DBG("");
+
+    const zmk_lighting_SetConnectionIndicatorRequest *r =
+        &req->subsystem.lighting.request_type.set_connection_indicator;
+    int ret = 0;
+
+    switch (r->which_field) {
+    case zmk_lighting_SetConnectionIndicatorRequest_enabled_tag:
+        ret = zmk_connection_indicator_set_enabled(r->field.enabled);
+        break;
+    case zmk_lighting_SetConnectionIndicatorRequest_usb_color_tag:
+        ret = zmk_connection_indicator_set_usb_color(r->field.usb_color);
+        break;
+    case zmk_lighting_SetConnectionIndicatorRequest_bt_color_tag:
+        ret = zmk_connection_indicator_set_bt_color(r->field.bt_color);
+        break;
+    case zmk_lighting_SetConnectionIndicatorRequest_key_position_tag:
+        ret = zmk_connection_indicator_set_key_pos((uint8_t)r->field.key_position);
+        break;
+    case zmk_lighting_SetConnectionIndicatorRequest_layer_id_tag:
+        ret = zmk_connection_indicator_set_layer_id((uint8_t)r->field.layer_id);
+        break;
+    default:
+        return ZMK_RPC_SIMPLE_ERR(GENERIC);
+    }
+
+    if (ret == 0) {
+        raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
+            .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
+    }
+    return LIGHTING_RESPONSE(set_connection_indicator, ret == 0);
+}
+
+ZMK_RPC_SUBSYSTEM_HANDLER(lighting, get_connection_indicator, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(lighting, set_connection_indicator, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
 #endif /* CONFIG_EXPERIMENTAL_RGB_LAYER && CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE */
 
@@ -393,6 +457,10 @@ static int lighting_settings_reset(void) {
     int caps_ret = zmk_capslock_indicator_settings_reset();
     if (caps_ret < 0) {
         return caps_ret;
+    }
+    int conn_ret = zmk_connection_indicator_settings_reset();
+    if (conn_ret < 0) {
+        return conn_ret;
     }
 #endif
 
