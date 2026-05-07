@@ -18,8 +18,6 @@ static void zmk_rgb_underglow_effect_gradient(void) {
         /* Use normalised X position (0-1) mapped to gradient space */
         float pos = led_norm_x(i); /* 0-1 */
         float distance = fmodf(1.0f + pos - gradient_offset, 1.0f);
-        if (distance < 0)
-            distance += 1.0f;
 
         float segment_width = 1.0f / 3.0f;
         int from_idx = (int)(distance / segment_width);

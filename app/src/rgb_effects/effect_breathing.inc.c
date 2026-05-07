@@ -24,7 +24,7 @@ static void zmk_rgb_underglow_effect_breathing(void) {
     }
 
     /* Advance phase according to animation speed */
-    breathing_phase += anim_speed() * 0.003f;
+    breathing_phase += anim_speed() * 0.001f;
     if (breathing_phase >= 1.0f)
         breathing_phase -= 1.0f;
 }

@@ -7,7 +7,13 @@ static void zmk_rgb_underglow_effect_sparkle(void) {
             sparkle_generate_pixel(i, false);
         }
 
-        sparkle_data[i].counter--;
+        uint16_t dec = (uint16_t)anim_speed();
+        if (dec < 1)
+            dec = 1;
+        if (sparkle_data[i].counter > dec)
+            sparkle_data[i].counter -= dec;
+        else
+            sparkle_data[i].counter = 0;
 
         float intensity;
         if (sparkle_data[i].total_frames <= sparkle_data[i].counter) {

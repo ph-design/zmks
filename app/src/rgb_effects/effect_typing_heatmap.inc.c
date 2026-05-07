@@ -2,7 +2,6 @@
 
 static uint8_t heatmap_temp[STRIP_NUM_PIXELS];
 static uint32_t heatmap_decrease_timer;
-static bool heatmap_decrease_this_frame;
 
 #ifndef HEATMAP_INCREASE_STEP
 #define HEATMAP_INCREASE_STEP 32
@@ -65,14 +64,14 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
     if (delay_ms < 5)
         delay_ms = 5;
 
-    heatmap_decrease_this_frame = ((now - heatmap_decrease_timer) >= (uint32_t)delay_ms);
-    if (heatmap_decrease_this_frame)
+    bool decrease = ((now - heatmap_decrease_timer) >= (uint32_t)delay_ms);
+    if (decrease)
         heatmap_decrease_timer = now;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         uint8_t val = heatmap_temp[i];
 
-        if (heatmap_decrease_this_frame && val > 0)
+        if (decrease && val > 0)
             heatmap_temp[i] = --val;
 
         if (val == 0) {

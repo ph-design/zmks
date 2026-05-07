@@ -31,7 +31,7 @@ static void zmk_rgb_underglow_effect_knight(void) {
     if (knight_frame_acc >= 2) {
         int steps = knight_frame_acc / 2;
         knight_frame_acc %= 2;
-        float delta = (float)knight_dir_f * (float)steps * 0.015f;
+        float delta = (float)knight_dir_f * (float)steps * 0.010f;
         knight_pos_f += delta;
         if (knight_pos_f >= 1.0f) {
             knight_pos_f = 1.0f;
