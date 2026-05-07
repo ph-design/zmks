@@ -189,17 +189,10 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
 
 ZMK_RPC_SUBSYSTEM_HANDLER(lighting, save_state, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
-/* ------------------------------------------------------------------ */
-/*  Layer LED Colors RPC handlers                                     */
-/* ------------------------------------------------------------------ */
 
 #if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 
 #include <zmk/rgb_underglow_layer.h>
-
-struct layer_led_encode_state {
-    uint8_t layer_count;
-};
 
 static bool encode_layer_led_binding(pb_ostream_t *stream, const pb_field_t *field,
                                      void *const *arg) {
@@ -292,21 +285,7 @@ static zmk_studio_Response save_layer_led_state(const zmk_studio_Request *req) {
         LOG_ERR("Failed to save layer LED state: %d", ret);
     }
 
-    /* Only persist CapsLock override if the user actually modified it;
-     * otherwise we would write default values that activate the override
-     * on next boot and discard the devicetree colors. */
-    bool caps_en;
-    uint32_t caps_off, caps_on;
-    uint8_t caps_pos, caps_layer;
-    zmk_capslock_indicator_get_state(&caps_en, &caps_off, &caps_on, &caps_pos, &caps_layer);
-    if (caps_off != 0 || caps_on != 0 || !caps_en ||
-        caps_layer != ZMK_STATUS_INDICATOR_ANY_LAYER || caps_pos != 0) {
-        ret |= zmk_capslock_indicator_save();
-    }
-
-    /* Always persist connection indicator state if it has been touched. The
-     * indicator is disabled by default, so a save call here is harmless when
-     * the user has not configured it. */
+    ret |= zmk_capslock_indicator_save();
     ret |= zmk_connection_indicator_save();
     return LIGHTING_RESPONSE(save_layer_led_state, ret == 0);
 }

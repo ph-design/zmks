@@ -29,5 +29,12 @@
             display-name = "Underglow ScrollLock indicator";
         };
 
+        ug_conn: ugconn {
+            compatible = "zmk,behavior-underglow-indicators";
+            indicator = <CONNECTION>;
+            #binding-cells = <2>;
+            display-name = "Underglow Connection indicator";
+        };
+
     };
 };

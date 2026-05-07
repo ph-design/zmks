@@ -6,7 +6,6 @@
 
 #define DT_DRV_COMPAT zmk_behavior_underglow_indicators
 
-// Dependencies
 #include <zephyr/device.h>
 #include <drivers/behavior.h>
 #include <zephyr/logging/log.h>
@@ -58,20 +57,27 @@ static uint8_t capslock_key_position = 0;
 static bool capslock_key_position_set = false;
 
 struct connection_indicator_state {
+    bool has_override;
     bool enabled;
     uint32_t usb_color;
     uint32_t bt_color;
     uint8_t key_pos;
     uint8_t layer_id;
+    bool has_pos;
 };
 
 static struct connection_indicator_state conn_state = {
+    .has_override = false,
     .enabled = false,
     .usb_color = 0xFFFFFF,
     .bt_color = 0x0000FF,
     .key_pos = 0,
     .layer_id = ZMK_STATUS_INDICATOR_ANY_LAYER,
+    .has_pos = false,
 };
+
+static uint8_t conn_key_position = 0;
+static bool conn_key_position_set = false;
 
 static int underglow_indicators_init(const struct device *dev) { return 0; };
 
@@ -85,24 +91,46 @@ static int underglow_indicators_process(struct zmk_behavior_binding *binding,
     const struct underglow_indicators_config *config = dev->config;
     data->layers |= BIT(event.layer);
 
-    /* Record the key position of this CapsLock indicator for Studio queries */
     if (!capslock_key_position_set && config->indicator == CAPS_LOCK) {
         capslock_key_position = (uint8_t)event.position;
         capslock_key_position_set = true;
     }
 
+    if (!conn_key_position_set && config->indicator == CONNECTION) {
+        conn_key_position = (uint8_t)event.position;
+        conn_key_position_set = true;
+    }
+
     if (caps_override.has_override && config->indicator == CAPS_LOCK) {
         if (!caps_override.enabled) {
-            return 0; /* Disabled: transparent */
+            return 0;
+        }
+        if (caps_override.has_pos) {
+            return 0;
         }
         if (data->indicators & BIT(config->indicator)) {
-            /* Use bit 24 as valid-color marker so 0x000000 (black) is not
-             * confused with transparent (0).  The overlay only uses the
-             * lower 24 bits for RGB. */
             return caps_override.on_color | 0x01000000;
         } else {
             return caps_override.off_color | 0x01000000;
         }
+    }
+
+    if (conn_state.has_override && config->indicator == CONNECTION) {
+        if (!conn_state.enabled) {
+            return 0;
+        }
+        if (conn_state.has_pos) {
+            return 0;
+        }
+        struct zmk_endpoint_instance ep = zmk_endpoints_selected();
+        return (ep.transport == ZMK_TRANSPORT_USB) ? (conn_state.usb_color | 0x01000000)
+                                                   : (conn_state.bt_color | 0x01000000);
+    }
+
+    if (config->indicator == CONNECTION) {
+        struct zmk_endpoint_instance ep = zmk_endpoints_selected();
+        return (ep.transport == ZMK_TRANSPORT_USB) ? (binding->param1 | 0x01000000)
+                                                   : (binding->param2 | 0x01000000);
     }
 
     if (data->indicators & BIT(config->indicator))
@@ -135,7 +163,7 @@ static int underglow_indicators_listener(const zmk_event_t *eh) {
     return ZMK_EV_EVENT_BUBBLE;
 }
 
-static inline void caps_notify_changed(void) {
+static inline void indicator_notify_changed(void) {
     raise_zmk_underglow_color_changed((struct zmk_underglow_color_changed){
         .layers = underglow_indicators_data.layers, .wakeup = true});
 }
@@ -153,21 +181,21 @@ int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_
 int zmk_capslock_indicator_set_enabled(bool enabled) {
     caps_override.has_override = true;
     caps_override.enabled = enabled;
-    caps_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_capslock_indicator_set_off_color(uint32_t color) {
     caps_override.has_override = true;
     caps_override.off_color = color;
-    caps_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_capslock_indicator_set_on_color(uint32_t color) {
     caps_override.has_override = true;
     caps_override.on_color = color;
-    caps_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
@@ -175,14 +203,14 @@ int zmk_capslock_indicator_set_key_pos(uint8_t key_pos) {
     caps_override.has_override = true;
     caps_override.has_pos = true;
     caps_override.key_pos = key_pos;
-    caps_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_capslock_indicator_set_layer_id(uint8_t layer_id) {
     caps_override.has_override = true;
     caps_override.layer_id = layer_id;
-    caps_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
@@ -204,53 +232,57 @@ bool zmk_capslock_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos, uin
     return true;
 }
 
-static inline void conn_notify_changed(void) {
-    raise_zmk_underglow_color_changed((struct zmk_underglow_color_changed){
-        .layers = underglow_indicators_data.layers, .wakeup = true});
-}
-
 int zmk_connection_indicator_get_state(bool *enabled, uint32_t *usb_color, uint32_t *bt_color,
                                        uint8_t *key_pos, uint8_t *layer_id) {
-    *enabled = conn_state.enabled;
-    *usb_color = conn_state.usb_color;
-    *bt_color = conn_state.bt_color;
-    *key_pos = conn_state.key_pos;
+    *enabled = conn_state.has_override ? conn_state.enabled : conn_key_position_set;
+    *usb_color = conn_state.has_override ? conn_state.usb_color : 0xFFFFFF;
+    *bt_color = conn_state.has_override ? conn_state.bt_color : 0x0000FF;
+    *key_pos = conn_state.has_pos ? conn_state.key_pos : conn_key_position;
     *layer_id = conn_state.layer_id;
     return 0;
 }
 
 int zmk_connection_indicator_set_enabled(bool enabled) {
+    conn_state.has_override = true;
     conn_state.enabled = enabled;
-    conn_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_connection_indicator_set_usb_color(uint32_t color) {
+    conn_state.has_override = true;
     conn_state.usb_color = color;
-    conn_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_connection_indicator_set_bt_color(uint32_t color) {
+    conn_state.has_override = true;
     conn_state.bt_color = color;
-    conn_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_connection_indicator_set_key_pos(uint8_t key_pos) {
+    conn_state.has_override = true;
+    conn_state.has_pos = true;
     conn_state.key_pos = key_pos;
-    conn_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 int zmk_connection_indicator_set_layer_id(uint8_t layer_id) {
+    conn_state.has_override = true;
     conn_state.layer_id = layer_id;
-    conn_notify_changed();
+    indicator_notify_changed();
     return 0;
 }
 
 bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
                                       uint32_t *out_color) {
+    if (!conn_state.has_pos) {
+        return false;
+    }
     if (!conn_state.enabled) {
         return false;
     }
@@ -266,8 +298,8 @@ bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
 }
 
 static int conn_endpoint_listener(const zmk_event_t *eh) {
-    if (conn_state.enabled) {
-        conn_notify_changed();
+    if (conn_state.enabled || conn_key_position_set) {
+        indicator_notify_changed();
     }
     return ZMK_EV_EVENT_BUBBLE;
 }
@@ -282,16 +314,18 @@ struct capslock_settings_data {
     uint8_t key_pos;
     uint8_t layer_id;
     bool has_pos;
+    bool has_override;
 } __packed;
 
 int zmk_capslock_indicator_save(void) {
     struct capslock_settings_data data = {
-        .enabled = caps_override.has_override ? caps_override.enabled : true,
-        .off_color = caps_override.has_override ? caps_override.off_color : 0,
-        .on_color = caps_override.has_override ? caps_override.on_color : 0,
+        .enabled = caps_override.enabled,
+        .off_color = caps_override.off_color,
+        .on_color = caps_override.on_color,
         .key_pos = caps_override.key_pos,
         .layer_id = caps_override.layer_id,
         .has_pos = caps_override.has_pos,
+        .has_override = caps_override.has_override,
     };
     return settings_save_one("rgb/capslock", &data, sizeof(data));
 }
@@ -305,12 +339,15 @@ static int capslock_settings_set(const char *name, size_t len, settings_read_cb 
             LOG_ERR("Failed to read capslock settings (err %d)", rc);
             return rc;
         }
-        if ((size_t)rc != sizeof(data)) {
+
+        bool full_struct = ((size_t)rc == sizeof(data));
+        bool legacy_struct = ((size_t)rc == sizeof(data) - sizeof(bool));
+        if (!full_struct && !legacy_struct) {
             LOG_WRN("Discarding capslock settings of unexpected size %d", rc);
             return 0;
         }
 
-        caps_override.has_override = true;
+        caps_override.has_override = full_struct ? data.has_override : true;
         caps_override.enabled = data.enabled;
         caps_override.off_color = data.off_color;
         caps_override.on_color = data.on_color;
@@ -338,20 +375,24 @@ int zmk_capslock_indicator_settings_reset(void) {
 }
 
 struct connection_settings_data {
+    bool has_override;
     bool enabled;
     uint32_t usb_color;
     uint32_t bt_color;
     uint8_t key_pos;
     uint8_t layer_id;
+    bool has_pos;
 } __packed;
 
 int zmk_connection_indicator_save(void) {
     struct connection_settings_data data = {
+        .has_override = conn_state.has_override,
         .enabled = conn_state.enabled,
         .usb_color = conn_state.usb_color,
         .bt_color = conn_state.bt_color,
         .key_pos = conn_state.key_pos,
         .layer_id = conn_state.layer_id,
+        .has_pos = conn_state.has_pos,
     };
     return settings_save_one("rgb/conn", &data, sizeof(data));
 }
@@ -370,11 +411,13 @@ static int connection_settings_set(const char *name, size_t len, settings_read_c
             return 0;
         }
 
+        conn_state.has_override = data.has_override;
         conn_state.enabled = data.enabled;
         conn_state.usb_color = data.usb_color;
         conn_state.bt_color = data.bt_color;
         conn_state.key_pos = data.key_pos;
         conn_state.layer_id = data.layer_id;
+        conn_state.has_pos = data.has_pos;
         return 0;
     }
 
@@ -389,6 +432,8 @@ int zmk_connection_indicator_settings_reset(void) {
     if (ret < 0 && ret != -ENOENT) {
         return ret;
     }
+    conn_state.has_override = false;
+    conn_state.has_pos = false;
     conn_state.enabled = false;
     conn_state.usb_color = 0xFFFFFF;
     conn_state.bt_color = 0x0000FF;

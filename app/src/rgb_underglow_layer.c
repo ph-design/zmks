@@ -42,11 +42,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 RGBMAP_VAR(zmk_rgbmap, COND_CODE_1(IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE), (), (const)))
 
-/* ------------------------------------------------------------------ */
-/*  Transform vs legacy pixel-lookup                                  */
-/* ------------------------------------------------------------------ */
 #if DT_INST_NODE_HAS_PROP(0, transform)
-/* New path: rgb_transform node provides map[] and optional led-positions[] */
 #define RGB_TRANSFORM_NODE DT_INST_PHANDLE(0, transform)
 
 static const int pixel_lookup_table[] = DT_PROP(RGB_TRANSFORM_NODE, map);
@@ -60,7 +56,6 @@ static const int led_pos_raw[] = DT_PROP(RGB_TRANSFORM_NODE, led_positions);
 #endif /* led_positions */
 
 #elif DT_INST_NODE_HAS_PROP(0, pixel_lookup)
-/* Legacy path: pixel-lookup on underglow-layer node itself */
 static const int pixel_lookup_table[] = DT_INST_PROP(0, pixel_lookup);
 #define RGB_HAS_POSITIONS 0
 
@@ -99,7 +94,6 @@ uint8_t rgb_underglow_top_layer_with_state(uint32_t state_to_test) {
             return layer;
         }
     }
-    // return default layer (0)
     return 0;
 }
 
@@ -110,10 +104,6 @@ uint8_t rgb_underglow_top_layer(void) {
     return zmk_keymap_highest_layer_active();
 #endif
 }
-
-/* ------------------------------------------------------------------ */
-/*  Coordinate access (led-positions from rgb_transform)              */
-/* ------------------------------------------------------------------ */
 
 bool rgb_has_led_positions(void) {
 #if RGB_HAS_POSITIONS
@@ -153,9 +143,6 @@ int rgb_led_position_raw_y(int binding_idx) {
 #endif
 }
 
-/* ------------------------------------------------------------------ */
-/*  Runtime layer color modification + settings persistence           */
-/* ------------------------------------------------------------------ */
 
 #if IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 

@@ -7,3 +7,4 @@
 #define NUM_LOCK 0
 #define CAPS_LOCK 1
 #define SCROLL_LOCK 2
+#define CONNECTION 3

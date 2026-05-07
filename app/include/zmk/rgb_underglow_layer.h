@@ -47,7 +47,6 @@ int zmk_rgb_layer_settings_reset(void);
 bool zmk_rgb_layer_is_enabled(void);
 int zmk_rgb_layer_set_enabled(bool enabled);
 
-
 #define ZMK_STATUS_INDICATOR_ANY_LAYER 0xFF
 
 int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_t *on_color,
@@ -71,5 +70,4 @@ int zmk_connection_indicator_save(void);
 int zmk_connection_indicator_settings_reset(void);
 
 bool zmk_capslock_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos, uint32_t *out_color);
-bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
-                                      uint32_t *out_color);
+bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos, uint32_t *out_color);
