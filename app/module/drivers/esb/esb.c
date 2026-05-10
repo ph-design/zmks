@@ -284,13 +284,19 @@ static void ppi_ack_timeout_disable(void) {
     nrf_ppi_channel_disable(NRF_PPI, ppi_ch_timer_disable);
 }
 
-static void hfclk_start(void) {
+static int hfclk_start(void) {
     if (nrf_clock_hf_is_running(NRF_CLOCK, NRF_CLOCK_HFCLK_HIGH_ACCURACY)) {
-        return;
+        return 0;
     }
     nrf_clock_task_trigger(NRF_CLOCK, NRF_CLOCK_TASK_HFCLKSTART);
-    while (!nrf_clock_hf_is_running(NRF_CLOCK, NRF_CLOCK_HFCLK_HIGH_ACCURACY)) {
+
+    if (!WAIT_FOR(nrf_clock_hf_is_running(NRF_CLOCK, NRF_CLOCK_HFCLK_HIGH_ACCURACY), 10000,
+                  k_busy_wait(1))) {
+        LOG_ERR("HFCLK start timed out");
+        return -ETIMEDOUT;
     }
+
+    return 0;
 }
 
 static void start_tx_transaction(void) {
@@ -607,8 +613,8 @@ static void watchdog_handler(struct k_work *work) {
     nrf_timer_int_disable(esb_timer_inst, 0xFFFFFFFF);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
-                  100, k_busy_wait(1))) {
+    if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100,
+                  k_busy_wait(1))) {
         LOG_ERR("Watchdog: RADIO disable timed out");
     }
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
@@ -632,8 +638,7 @@ static void radio_clear(void) {
     nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
-                   100, k_busy_wait(1));
+    (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100, k_busy_wait(1));
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
 }
 
@@ -669,7 +674,11 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     esb_timer_inst = NRF_TIMER2;
     esb_timer_irqn = TIMER2_IRQn;
 
-    hfclk_start();
+    int ret = hfclk_start();
+    if (ret) {
+        nrfx_ppi_channel_free(ppi_ch_timer_disable);
+        return ret;
+    }
 
     k_work_init(&evt_work, evt_work_handler);
     k_work_init_delayable(&watchdog_work, watchdog_handler);
@@ -757,7 +766,10 @@ int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
     if (!payload) {
         return -EINVAL;
     }
-    hfclk_start();
+    int ret = hfclk_start();
+    if (ret) {
+        return ret;
+    }
     if (payload->length == 0 || payload->length > CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH) {
         return -EMSGSIZE;
     }
