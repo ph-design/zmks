@@ -22,7 +22,15 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/activity.h>
 #include <zmk/workqueue.h>
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+#include <zmk/rgb_underglow.h>
+#endif
+
 static uint8_t last_state_of_charge = 0;
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+static bool rgb_off_by_low_bat = false;
+#endif
 
 uint8_t zmk_battery_state_of_charge(void) { return last_state_of_charge; }
 
@@ -41,11 +49,11 @@ static uint8_t lithium_ion_mv_to_pct(int16_t bat_mv) {
 
     if (bat_mv >= 4200) {
         return 100;
-    } else if (bat_mv <= 3450) {
+    } else if (bat_mv <= 3150) {
         return 0;
     }
 
-    return bat_mv * 2 / 15 - 459;
+    return (bat_mv - 3150) * 2 / 21;
 }
 
 #endif // IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE)
@@ -89,6 +97,26 @@ static int zmk_battery_update(const struct device *battery) {
     LOG_DBG("State of change %d from %d mv", state_of_charge.val1, mv);
 #else
 #error "Not a supported reporting fetch mode"
+#endif
+
+    // Round down to nearest 5% step to reduce jitter and perceived rapid drops
+    state_of_charge.val1 = (state_of_charge.val1 / 5) * 5;
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    // Auto-off RGB underglow when battery is critically low to save power
+    if (state_of_charge.val1 <= 5) {
+        if (!rgb_off_by_low_bat) {
+            bool rgb_on = false;
+            zmk_rgb_underglow_get_state(&rgb_on);
+            if (rgb_on) {
+                LOG_WRN("Battery low (%d%%), turning off RGB underglow", state_of_charge.val1);
+                zmk_rgb_underglow_off();
+                rgb_off_by_low_bat = true;
+            }
+        }
+    } else {
+        rgb_off_by_low_bat = false;
+    }
 #endif
 
     if (last_state_of_charge != state_of_charge.val1) {
