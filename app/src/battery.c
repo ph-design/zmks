@@ -92,6 +92,21 @@ static int zmk_battery_update(const struct device *battery) {
     }
 
     uint16_t mv = voltage.val1 * 1000 + (voltage.val2 / 1000);
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    // Compensate for voltage sag when RGB underglow is on.
+    if (CONFIG_ZMK_BATTERY_RGB_VOLTAGE_SAG_MV > 0) {
+        bool rgb_on = false;
+        zmk_rgb_underglow_get_state(&rgb_on);
+        if (rgb_on) {
+            uint16_t compensated = mv + CONFIG_ZMK_BATTERY_RGB_VOLTAGE_SAG_MV;
+            if (compensated <= 4200) {
+                mv = compensated;
+            }
+        }
+    }
+#endif
+
     state_of_charge.val1 = lithium_ion_mv_to_pct(mv);
 
     LOG_DBG("State of change %d from %d mv", state_of_charge.val1, mv);

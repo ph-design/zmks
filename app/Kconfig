@@ -393,6 +393,19 @@ config ZMK_BATTERY_REPORTING_FETCH_MODE_LITHIUM_VOLTAGE
 
 endchoice
 
+config ZMK_BATTERY_RGB_VOLTAGE_SAG_MV
+    int "RGB underglow voltage sag compensation (mV)"
+    depends on ZMK_BATTERY_REPORTING && ZMK_RGB_UNDERGLOW
+    default 0
+    range 0 500
+    help
+      When RGB underglow is on, battery voltage readings drop due to
+      increased current draw (especially with many LEDs). Set this to
+      compensate by adding the specified millivolts to the measured
+      voltage before calculating battery percentage.
+      Set to 0 to disable. Suggested starting value: 100-200 mV for
+      60+ LEDs, tune based on your actual measurements.
+
 endif # ZMK_BATTERY_REPORTING
 
 config ZMK_IDLE_TIMEOUT
