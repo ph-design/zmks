@@ -702,6 +702,97 @@ static void zmk_ble_ready(int err) {
     update_advertising();
 }
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+
+#define BLE_RADIO_SUSPEND_DRAIN_MS 5
+#define BLE_RADIO_RESUME_SETTLE_MS 5
+#define BLE_RADIO_DISABLE_TIMEOUT_US 1000
+
+static bool radio_force_disabled(uint32_t timeout_us) {
+    if (NRF_RADIO->STATE == RADIO_STATE_STATE_Disabled) {
+        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+        return true;
+    }
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
+    bool ok = WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
+                       timeout_us, k_busy_wait(1));
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    return ok;
+}
+
+static void ble_radio_release_to_esb(void) {
+    irq_disable(RADIO_IRQn);
+    irq_disable(TIMER0_IRQn);
+    irq_disable(RTC0_IRQn);
+
+    NRF_PPI->CHENCLR = 0xFFFFFFFF;
+
+    NRF_TIMER0->TASKS_STOP = 1;
+    NRF_TIMER0->TASKS_CLEAR = 1;
+    NRF_TIMER0->INTENCLR = 0xFFFFFFFF;
+    for (int i = 0; i < TIMER0_CC_NUM; i++) {
+        NRF_TIMER0->EVENTS_COMPARE[i] = 0;
+    }
+
+    NRF_RTC0->TASKS_STOP = 1;
+    NRF_RTC0->TASKS_CLEAR = 1;
+    NRF_RTC0->INTENCLR = 0xFFFFFFFF;
+    NRF_RTC0->EVTENCLR = 0xFFFFFFFF;
+    for (int i = 0; i < RTC0_CC_NUM; i++) {
+        NRF_RTC0->EVENTS_COMPARE[i] = 0;
+    }
+    NRF_RTC0->EVENTS_TICK = 0;
+    NRF_RTC0->EVENTS_OVRFLW = 0;
+
+    NRF_CCM->ENABLE = CCM_ENABLE_ENABLE_Disabled;
+    NRF_AAR->ENABLE = AAR_ENABLE_ENABLE_Disabled;
+
+    nrf_radio_shorts_set(NRF_RADIO, 0);
+    nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
+    if (!radio_force_disabled(BLE_RADIO_DISABLE_TIMEOUT_US)) {
+        LOG_WRN("RADIO disable timed out after BLE stop (state=%u)", NRF_RADIO->STATE);
+    }
+
+    NVIC_ClearPendingIRQ(RADIO_IRQn);
+    NVIC_ClearPendingIRQ(RTC0_IRQn);
+    NVIC_ClearPendingIRQ(TIMER0_IRQn);
+}
+
+static void ble_radio_reclaim_from_esb(void) {
+
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_READY);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_PAYLOAD);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCOK);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCERROR);
+
+    for (int i = 0; i < TIMER0_CC_NUM; i++) {
+        NRF_TIMER0->EVENTS_COMPARE[i] = 0;
+    }
+    for (int i = 0; i < RTC0_CC_NUM; i++) {
+        NRF_RTC0->EVENTS_COMPARE[i] = 0;
+    }
+    NRF_RTC0->EVENTS_TICK = 0;
+    NRF_RTC0->EVENTS_OVRFLW = 0;
+    NRF_CCM->ENABLE = CCM_ENABLE_ENABLE_Enabled;
+    NRF_AAR->ENABLE = AAR_ENABLE_ENABLE_Enabled;
+
+    NVIC_ClearPendingIRQ(RADIO_IRQn);
+    NVIC_ClearPendingIRQ(RTC0_IRQn);
+    NVIC_ClearPendingIRQ(TIMER0_IRQn);
+
+    irq_enable(RADIO_IRQn);
+    irq_enable(RTC0_IRQn);
+    irq_enable(TIMER0_IRQn);
+
+    NRF_RTC0->TASKS_START = 1;
+}
+
+#endif
+
 int zmk_ble_stop(void) {
     if (!ble_started) {
         return 0;
@@ -715,33 +806,8 @@ int zmk_ble_stop(void) {
     advertising_status = ZMK_ADV_NONE;
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
-    irq_disable(RADIO_IRQn);
-    irq_disable(TIMER0_IRQn);
-    irq_disable(RTC0_IRQn);
-
-    NRF_PPI->CHENCLR = 0xFFFFFFFF;
-
-    NRF_TIMER0->TASKS_STOP = 1;
-    NRF_TIMER0->TASKS_CLEAR = 1;
-    NRF_TIMER0->EVENTS_COMPARE[0] = 0;
-    NRF_TIMER0->EVENTS_COMPARE[1] = 0;
-
-    NRF_RTC0->TASKS_STOP = 1;
-    NRF_RTC0->TASKS_CLEAR = 1;
-    NRF_RTC0->EVENTS_COMPARE[0] = 0;
-
-    NRF_CCM->ENABLE = 0;
-    NRF_AAR->ENABLE = 0;
-
-    nrf_radio_shorts_set(NRF_RADIO, 0);
-    nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-    if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
-        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-        (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED),
-                       100, k_busy_wait(1));
-    }
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    k_msleep(BLE_RADIO_SUSPEND_DRAIN_MS);
+    ble_radio_release_to_esb();
 #endif
 
     LOG_INF("BLE stopped");
@@ -754,17 +820,11 @@ int zmk_ble_start(void) {
     }
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
-    NVIC_ClearPendingIRQ(RADIO_IRQn);
-    NVIC_ClearPendingIRQ(RTC0_IRQn);
-    NVIC_ClearPendingIRQ(TIMER0_IRQn);
-
-    irq_enable(RADIO_IRQn);
-    irq_enable(RTC0_IRQn);
-    irq_enable(TIMER0_IRQn);
-
-    NRF_RTC0->TASKS_START = 1;
+    ble_radio_reclaim_from_esb();
 
     ble_started = true;
+    k_msleep(BLE_RADIO_RESUME_SETTLE_MS);
+
     update_advertising();
     LOG_INF("BLE started");
     return 0;

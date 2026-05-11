@@ -6,6 +6,9 @@
 
 #include <zephyr/init.h>
 #include <zephyr/settings/settings.h>
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zephyr/sys/reboot.h>
+#endif
 
 #include <stdio.h>
 
@@ -29,6 +32,9 @@
 #include <zmk/events/endpoint_changed.h>
 
 #include <zephyr/logging/log.h>
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zephyr/logging/log_ctrl.h>
+#endif
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_ZMK_BLE)
@@ -158,12 +164,26 @@ static bool is_valid_transport(enum zmk_transport transport) {
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
 
+#define RADIO_SWITCH_WATCHDOG_MS 1000
+
+static void radio_switch_watchdog_expired(struct k_timer *timer) {
+    if (!radio_switching) {
+        return;
+    }
+    LOG_ERR("Radio switch watchdog expired (>%dms), rebooting", RADIO_SWITCH_WATCHDOG_MS);
+    LOG_PANIC();
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+static K_TIMER_DEFINE(radio_switch_watchdog, radio_switch_watchdog_expired, NULL);
+
 static int switch_radio_transport(enum zmk_transport new_transport) {
     if (radio_switching) {
         return -EBUSY;
     }
 
     radio_switching = true;
+    k_timer_start(&radio_switch_watchdog, K_MSEC(RADIO_SWITCH_WATCHDOG_MS), K_NO_WAIT);
     int ret = 0;
 
     if (new_transport == ZMK_TRANSPORT_2G4) {
@@ -193,7 +213,9 @@ done:
     if (ret == 0) {
         active_wireless_transport = new_transport;
     }
+
     radio_switching = false;
+    k_timer_stop(&radio_switch_watchdog);
     return ret;
 }
 
