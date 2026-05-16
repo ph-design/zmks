@@ -206,6 +206,7 @@ static int zmk_2g4_dongle_init(void) {
     zmk_esb_set_prefixes(prefix, 1);
 
     zmk_esb_set_rf_channel(CONFIG_ZMK_2G4_RF_CHANNEL);
+    zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ret = zmk_esb_start_rx();
     if (ret) {

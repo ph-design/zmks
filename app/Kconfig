@@ -44,7 +44,7 @@ if SOC_SERIES_NRF52X
 # Default on for our usage until boards implement retained bootmode.
 config NRF_STORE_REBOOT_TYPE_GPREGRET
     bool
-    default y
+    default y if !RETENTION_BOOT_MODE
 
 endif # SOC_SERIES_NRF52X
 
@@ -269,11 +269,6 @@ config ZMK_2G4_INIT_PRIORITY
     int "Init priority"
     default 50
 
-config ZMK_2G4_TX_POWER
-    int "TX power (dBm)"
-    default 4
-    range -40 8
-
 config ZMK_2G4_RETRANSMIT_COUNT
     int "Retransmit count"
     default 5
@@ -304,6 +299,11 @@ config ZMK_2G4_DONGLE_INIT_PRIORITY
 endif # ZMK_2G4_DONGLE
 
 if ZMK_2G4 || ZMK_2G4_DONGLE
+
+config ZMK_2G4_TX_POWER
+    int "TX power (dBm)"
+    default 4
+    range -40 8
 
 config ZMK_2G4_RF_CHANNEL
     int "RF channel (0-100)"
