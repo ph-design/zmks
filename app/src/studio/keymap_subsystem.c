@@ -256,6 +256,11 @@ zmk_studio_Response discard_changes(const zmk_studio_Request *req) {
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
 
+    ret = zmk_behavior_hold_tap_reload_from_settings();
+    if (ret < 0) {
+        LOG_WRN("Failed to discard hold-tap changes (%d)", ret);
+    }
+
 #if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
     ret = zmk_rgb_layer_settings_reset();
     if (ret < 0) {

@@ -1001,6 +1001,10 @@ int zmk_behavior_hold_tap_set_config(zmk_behavior_local_id_t local_id,
     if (in->flavor > FLAVOR_TAP_UNLESS_INTERRUPTED) {
         return -EINVAL;
     }
+
+    if (in->tapping_term_ms < 0) {
+        return -EINVAL;
+    }
     const struct ht_inst *inst = find_inst(local_id);
     if (!inst) {
         return -ENODEV;
@@ -1066,6 +1070,60 @@ int zmk_behavior_hold_tap_settings_reset(void) {
     return first_err;
 }
 
+int zmk_behavior_hold_tap_reload_from_settings(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(ht_instances); i++) {
+        apply_defaults_to_ram(&ht_instances[i]);
+    }
+
+    return settings_load_subtree("ht/cfg");
+}
+
+static void ht_apply_blob(const struct ht_inst *inst, const struct ht_settings_blob *blob) {
+    struct zmk_hold_tap_pub_config pub = {
+        .tapping_term_ms = blob->tapping_term_ms,
+        .require_prior_idle_ms = blob->require_prior_idle_ms,
+        .quick_tap_ms = blob->quick_tap_ms,
+        .flavor = blob->flavor,
+        .retro_tap = blob->retro_tap,
+        .hold_while_undecided = blob->hold_while_undecided,
+        .hold_while_undecided_linger = blob->hold_while_undecided_linger,
+        .hold_trigger_on_release = blob->hold_trigger_on_release,
+    };
+
+    if (pub.flavor <= FLAVOR_TAP_UNLESS_INTERRUPTED && pub.tapping_term_ms >= 0) {
+        apply_pub_to_config(inst->config, &pub);
+    }
+}
+
+struct ht_pending_load {
+    bool present;
+    zmk_behavior_local_id_t local_id;
+    struct ht_settings_blob blob;
+};
+
+static struct ht_pending_load ht_pending_loads[ARRAY_SIZE(ht_instances)];
+
+static void ht_stash_pending(zmk_behavior_local_id_t local_id,
+                             const struct ht_settings_blob *blob) {
+    struct ht_pending_load *slot = NULL;
+    for (size_t i = 0; i < ARRAY_SIZE(ht_pending_loads); i++) {
+        if (ht_pending_loads[i].present && ht_pending_loads[i].local_id == local_id) {
+            ht_pending_loads[i].blob = *blob;
+            return;
+        }
+        if (!slot && !ht_pending_loads[i].present) {
+            slot = &ht_pending_loads[i];
+        }
+    }
+    if (!slot) {
+        LOG_WRN("No room to defer ht/cfg load for local_id %u", local_id);
+        return;
+    }
+    slot->present = true;
+    slot->local_id = local_id;
+    slot->blob = *blob;
+}
+
 static int ht_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     if (!name || !*name) {
         return -ENOENT;
@@ -1075,35 +1133,41 @@ static int ht_settings_set(const char *name, size_t len, settings_read_cb read_c
     if (*endptr != '\0' || lid_raw > UINT16_MAX) {
         return -ENOENT;
     }
-    const struct ht_inst *inst = find_inst((zmk_behavior_local_id_t)lid_raw);
-    if (!inst) {
-        LOG_WRN("Skipping ht/cfg entry for unknown local_id %lu", lid_raw);
-        return 0;
-    }
     struct ht_settings_blob blob;
     int rc = read_cb(cb_arg, &blob, sizeof(blob));
     if (rc != sizeof(blob)) {
         LOG_WRN("Discarding ht/cfg/%lu of unexpected size %d", lid_raw, rc);
         return 0;
     }
-    struct zmk_hold_tap_pub_config pub = {
-        .tapping_term_ms = blob.tapping_term_ms,
-        .require_prior_idle_ms = blob.require_prior_idle_ms,
-        .quick_tap_ms = blob.quick_tap_ms,
-        .flavor = blob.flavor,
-        .retro_tap = blob.retro_tap,
-        .hold_while_undecided = blob.hold_while_undecided,
-        .hold_while_undecided_linger = blob.hold_while_undecided_linger,
-        .hold_trigger_on_release = blob.hold_trigger_on_release,
-    };
-    if (pub.flavor <= FLAVOR_TAP_UNLESS_INTERRUPTED && pub.tapping_term_ms >= 0 &&
-        pub.quick_tap_ms >= 0 && pub.require_prior_idle_ms >= 0) {
-        apply_pub_to_config(inst->config, &pub);
+    zmk_behavior_local_id_t local_id = (zmk_behavior_local_id_t)lid_raw;
+    const struct ht_inst *inst = find_inst(local_id);
+    if (inst) {
+        ht_apply_blob(inst, &blob);
+    } else {
+        ht_stash_pending(local_id, &blob);
     }
     return 0;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(zmk_hold_tap_cfg, "ht/cfg", NULL, ht_settings_set, NULL, NULL);
+static int ht_settings_commit(void) {
+    for (size_t i = 0; i < ARRAY_SIZE(ht_pending_loads); i++) {
+        struct ht_pending_load *pending = &ht_pending_loads[i];
+        if (!pending->present) {
+            continue;
+        }
+        const struct ht_inst *inst = find_inst(pending->local_id);
+        if (inst) {
+            ht_apply_blob(inst, &pending->blob);
+        } else {
+            LOG_WRN("Skipping ht/cfg entry for unknown local_id %u", pending->local_id);
+        }
+        pending->present = false;
+    }
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(zmk_hold_tap_cfg, "ht/cfg", NULL, ht_settings_set,
+                               ht_settings_commit, NULL);
 
 #endif
 
@@ -1125,4 +1189,5 @@ int zmk_behavior_hold_tap_set_config(zmk_behavior_local_id_t local_id,
 
 int zmk_behavior_hold_tap_save_all(void) { return 0; }
 int zmk_behavior_hold_tap_settings_reset(void) { return 0; }
+int zmk_behavior_hold_tap_reload_from_settings(void) { return 0; }
 #endif

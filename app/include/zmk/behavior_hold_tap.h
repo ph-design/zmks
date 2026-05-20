@@ -33,3 +33,5 @@ int zmk_behavior_hold_tap_set_config(zmk_behavior_local_id_t local_id,
 int zmk_behavior_hold_tap_save_all(void);
 
 int zmk_behavior_hold_tap_settings_reset(void);
+
+int zmk_behavior_hold_tap_reload_from_settings(void);
