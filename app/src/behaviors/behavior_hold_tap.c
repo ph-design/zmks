@@ -18,6 +18,11 @@
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/keycode_state_changed.h>
 #include <zmk/behavior.h>
+#include <zmk/behavior_hold_tap.h>
+
+#if IS_ENABLED(CONFIG_ZMK_STUDIO)
+#include <zephyr/settings/settings.h>
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -857,8 +862,31 @@ static int behavior_hold_tap_init(const struct device *dev) {
     return 0;
 }
 
+struct hold_tap_settable_defaults {
+    int32_t tapping_term_ms;
+    int32_t quick_tap_ms;
+    int32_t require_prior_idle_ms;
+    uint8_t flavor;
+    bool retro_tap;
+    bool hold_while_undecided;
+    bool hold_while_undecided_linger;
+    bool hold_trigger_on_release;
+};
+
 #define KP_INST(n)                                                                                 \
-    static const struct behavior_hold_tap_config behavior_hold_tap_config_##n = {                  \
+    static const struct hold_tap_settable_defaults behavior_hold_tap_defaults_##n = {              \
+        .tapping_term_ms = DT_INST_PROP(n, tapping_term_ms),                                       \
+        .quick_tap_ms = DT_INST_PROP(n, quick_tap_ms),                                             \
+        .require_prior_idle_ms = DT_INST_PROP(n, global_quick_tap)                                 \
+                                     ? DT_INST_PROP(n, quick_tap_ms)                               \
+                                     : DT_INST_PROP(n, require_prior_idle_ms),                     \
+        .flavor = DT_ENUM_IDX(DT_DRV_INST(n), flavor),                                             \
+        .retro_tap = DT_INST_PROP(n, retro_tap),                                                   \
+        .hold_while_undecided = DT_INST_PROP(n, hold_while_undecided),                             \
+        .hold_while_undecided_linger = DT_INST_PROP(n, hold_while_undecided_linger),               \
+        .hold_trigger_on_release = DT_INST_PROP(n, hold_trigger_on_release),                       \
+    };                                                                                             \
+    static struct behavior_hold_tap_config behavior_hold_tap_config_##n = {                        \
         .tapping_term_ms = DT_INST_PROP(n, tapping_term_ms),                                       \
         .hold_behavior_dev = DEVICE_DT_NAME(DT_INST_PHANDLE_BY_IDX(n, bindings, 0)),               \
         .tap_behavior_dev = DEVICE_DT_NAME(DT_INST_PHANDLE_BY_IDX(n, bindings, 1)),                \
@@ -881,4 +909,220 @@ static int behavior_hold_tap_init(const struct device *dev) {
 
 DT_INST_FOREACH_STATUS_OKAY(KP_INST)
 
-#endif /* DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT) */
+#if IS_ENABLED(CONFIG_ZMK_STUDIO)
+
+struct ht_inst {
+    const struct device *device;
+    struct behavior_hold_tap_config *config;
+    const struct hold_tap_settable_defaults *defaults;
+};
+
+#define KP_INST_REG(n)                                                                             \
+    {.device = DEVICE_DT_INST_GET(n),                                                              \
+     .config = &behavior_hold_tap_config_##n,                                                      \
+     .defaults = &behavior_hold_tap_defaults_##n},
+
+static const struct ht_inst ht_instances[] = {DT_INST_FOREACH_STATUS_OKAY(KP_INST_REG)};
+
+static const struct ht_inst *find_inst(zmk_behavior_local_id_t local_id) {
+    const char *name = zmk_behavior_find_behavior_name_from_local_id(local_id);
+    if (!name) {
+        return NULL;
+    }
+    const struct device *dev = zmk_behavior_get_binding(name);
+    if (!dev) {
+        return NULL;
+    }
+    for (size_t i = 0; i < ARRAY_SIZE(ht_instances); i++) {
+        if (ht_instances[i].device == dev) {
+            return &ht_instances[i];
+        }
+    }
+    return NULL;
+}
+
+static void copy_settable_to_pub(const struct behavior_hold_tap_config *src,
+                                 struct zmk_hold_tap_pub_config *dst) {
+    dst->tapping_term_ms = src->tapping_term_ms;
+    dst->require_prior_idle_ms = src->require_prior_idle_ms;
+    dst->quick_tap_ms = src->quick_tap_ms;
+    dst->flavor = (uint8_t)src->flavor;
+    dst->retro_tap = src->retro_tap;
+    dst->hold_while_undecided = src->hold_while_undecided;
+    dst->hold_while_undecided_linger = src->hold_while_undecided_linger;
+    dst->hold_trigger_on_release = src->hold_trigger_on_release;
+}
+
+static void apply_pub_to_config(struct behavior_hold_tap_config *dst,
+                                const struct zmk_hold_tap_pub_config *src) {
+    dst->tapping_term_ms = src->tapping_term_ms;
+    dst->require_prior_idle_ms = src->require_prior_idle_ms;
+    dst->quick_tap_ms = src->quick_tap_ms;
+    dst->flavor = (enum flavor)src->flavor;
+    dst->retro_tap = src->retro_tap;
+    dst->hold_while_undecided = src->hold_while_undecided;
+    dst->hold_while_undecided_linger = src->hold_while_undecided_linger;
+    dst->hold_trigger_on_release = src->hold_trigger_on_release;
+}
+
+static void apply_defaults_to_ram(const struct ht_inst *inst) {
+    inst->config->tapping_term_ms = inst->defaults->tapping_term_ms;
+    inst->config->require_prior_idle_ms = inst->defaults->require_prior_idle_ms;
+    inst->config->quick_tap_ms = inst->defaults->quick_tap_ms;
+    inst->config->flavor = (enum flavor)inst->defaults->flavor;
+    inst->config->retro_tap = inst->defaults->retro_tap;
+    inst->config->hold_while_undecided = inst->defaults->hold_while_undecided;
+    inst->config->hold_while_undecided_linger = inst->defaults->hold_while_undecided_linger;
+    inst->config->hold_trigger_on_release = inst->defaults->hold_trigger_on_release;
+}
+
+bool zmk_behavior_is_hold_tap(zmk_behavior_local_id_t local_id) {
+    return find_inst(local_id) != NULL;
+}
+
+int zmk_behavior_hold_tap_get_config(zmk_behavior_local_id_t local_id,
+                                     struct zmk_hold_tap_pub_config *out) {
+    if (!out) {
+        return -EINVAL;
+    }
+    const struct ht_inst *inst = find_inst(local_id);
+    if (!inst) {
+        return -ENODEV;
+    }
+    copy_settable_to_pub(inst->config, out);
+    return 0;
+}
+
+int zmk_behavior_hold_tap_set_config(zmk_behavior_local_id_t local_id,
+                                     const struct zmk_hold_tap_pub_config *in) {
+    if (!in) {
+        return -EINVAL;
+    }
+    if (in->flavor > FLAVOR_TAP_UNLESS_INTERRUPTED) {
+        return -EINVAL;
+    }
+    const struct ht_inst *inst = find_inst(local_id);
+    if (!inst) {
+        return -ENODEV;
+    }
+    apply_pub_to_config(inst->config, in);
+    return 0;
+}
+
+struct ht_settings_blob {
+    int32_t tapping_term_ms;
+    int32_t require_prior_idle_ms;
+    int32_t quick_tap_ms;
+    uint8_t flavor;
+    bool retro_tap;
+    bool hold_while_undecided;
+    bool hold_while_undecided_linger;
+    bool hold_trigger_on_release;
+} __packed;
+
+int zmk_behavior_hold_tap_save_all(void) {
+    char key[24];
+    for (size_t i = 0; i < ARRAY_SIZE(ht_instances); i++) {
+        const struct ht_inst *inst = &ht_instances[i];
+        zmk_behavior_local_id_t lid = zmk_behavior_get_local_id(inst->device->name);
+        if (lid == UINT16_MAX) {
+            continue;
+        }
+        struct ht_settings_blob blob = {
+            .tapping_term_ms = inst->config->tapping_term_ms,
+            .require_prior_idle_ms = inst->config->require_prior_idle_ms,
+            .quick_tap_ms = inst->config->quick_tap_ms,
+            .flavor = (uint8_t)inst->config->flavor,
+            .retro_tap = inst->config->retro_tap,
+            .hold_while_undecided = inst->config->hold_while_undecided,
+            .hold_while_undecided_linger = inst->config->hold_while_undecided_linger,
+            .hold_trigger_on_release = inst->config->hold_trigger_on_release,
+        };
+        snprintk(key, sizeof(key), "ht/cfg/%u", lid);
+        int rc = settings_save_one(key, &blob, sizeof(blob));
+        if (rc < 0) {
+            LOG_WRN("Failed to save %s (%d)", key, rc);
+            return rc;
+        }
+    }
+    return 0;
+}
+
+int zmk_behavior_hold_tap_settings_reset(void) {
+    char key[24];
+    int first_err = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(ht_instances); i++) {
+        const struct ht_inst *inst = &ht_instances[i];
+        zmk_behavior_local_id_t lid = zmk_behavior_get_local_id(inst->device->name);
+        if (lid != UINT16_MAX) {
+            snprintk(key, sizeof(key), "ht/cfg/%u", lid);
+            int rc = settings_delete(key);
+            if (rc < 0 && rc != -ENOENT && first_err == 0) {
+                first_err = rc;
+            }
+        }
+        apply_defaults_to_ram(inst);
+    }
+    return first_err;
+}
+
+static int ht_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    if (!name || !*name) {
+        return -ENOENT;
+    }
+    char *endptr;
+    unsigned long lid_raw = strtoul(name, &endptr, 10);
+    if (*endptr != '\0' || lid_raw > UINT16_MAX) {
+        return -ENOENT;
+    }
+    const struct ht_inst *inst = find_inst((zmk_behavior_local_id_t)lid_raw);
+    if (!inst) {
+        LOG_WRN("Skipping ht/cfg entry for unknown local_id %lu", lid_raw);
+        return 0;
+    }
+    struct ht_settings_blob blob;
+    int rc = read_cb(cb_arg, &blob, sizeof(blob));
+    if (rc != sizeof(blob)) {
+        LOG_WRN("Discarding ht/cfg/%lu of unexpected size %d", lid_raw, rc);
+        return 0;
+    }
+    struct zmk_hold_tap_pub_config pub = {
+        .tapping_term_ms = blob.tapping_term_ms,
+        .require_prior_idle_ms = blob.require_prior_idle_ms,
+        .quick_tap_ms = blob.quick_tap_ms,
+        .flavor = blob.flavor,
+        .retro_tap = blob.retro_tap,
+        .hold_while_undecided = blob.hold_while_undecided,
+        .hold_while_undecided_linger = blob.hold_while_undecided_linger,
+        .hold_trigger_on_release = blob.hold_trigger_on_release,
+    };
+    if (pub.flavor <= FLAVOR_TAP_UNLESS_INTERRUPTED && pub.tapping_term_ms >= 0 &&
+        pub.quick_tap_ms >= 0 && pub.require_prior_idle_ms >= 0) {
+        apply_pub_to_config(inst->config, &pub);
+    }
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(zmk_hold_tap_cfg, "ht/cfg", NULL, ht_settings_set, NULL, NULL);
+
+#endif
+
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_STUDIO) && !DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
+// No hold-tap behaviors defined — ship empty stubs so Studio links cleanly.
+bool zmk_behavior_is_hold_tap(zmk_behavior_local_id_t local_id) { return false; }
+
+int zmk_behavior_hold_tap_get_config(zmk_behavior_local_id_t local_id,
+                                     struct zmk_hold_tap_pub_config *out) {
+    return -ENODEV;
+}
+
+int zmk_behavior_hold_tap_set_config(zmk_behavior_local_id_t local_id,
+                                     const struct zmk_hold_tap_pub_config *in) {
+    return -ENODEV;
+}
+
+int zmk_behavior_hold_tap_save_all(void) { return 0; }
+int zmk_behavior_hold_tap_settings_reset(void) { return 0; }
+#endif

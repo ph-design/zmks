@@ -15,6 +15,7 @@ LOG_MODULE_DECLARE(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 #include <zmk/keymap.h>
 #include <zmk/studio/rpc.h>
 #include <zmk/physical_layouts.h>
+#include <zmk/behavior_hold_tap.h>
 
 #if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 #include <zmk/rgb_underglow_layer.h>
@@ -217,6 +218,13 @@ zmk_studio_Response save_changes(const zmk_studio_Request *req) {
     ret = zmk_keymap_save_changes();
     if (ret < 0) {
         LOG_WRN("Failed to save keymap changes (%d)", ret);
+        map_errno_to_save_resp(ret, &resp);
+        return KEYMAP_RESPONSE(save_changes, resp);
+    }
+
+    ret = zmk_behavior_hold_tap_save_all();
+    if (ret < 0) {
+        LOG_WRN("Failed to save hold-tap configs (%d)", ret);
         map_errno_to_save_resp(ret, &resp);
         return KEYMAP_RESPONSE(save_changes, resp);
     }

@@ -11,6 +11,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/studio/rpc.h>
 #include <drivers/behavior.h>
 #include <zmk/hid.h>
+#include <zmk/behavior_hold_tap.h>
 
 ZMK_RPC_SUBSYSTEM(behaviors)
 
@@ -209,5 +210,69 @@ zmk_studio_Response get_behavior_details(const zmk_studio_Request *req) {
     return BEHAVIOR_RESPONSE(get_behavior_details, resp);
 }
 
+zmk_studio_Response get_behavior_config(const zmk_studio_Request *req) {
+    uint32_t lid = req->subsystem.behaviors.request_type.get_behavior_config.behavior_id;
+
+    zmk_behaviors_GetBehaviorConfigResponse resp =
+        zmk_behaviors_GetBehaviorConfigResponse_init_zero;
+    resp.behavior_id = lid;
+    resp.which_config = 0; // leave oneof unset — caller uses this to know "not configurable"
+
+    if (zmk_behavior_is_hold_tap((zmk_behavior_local_id_t)lid)) {
+        struct zmk_hold_tap_pub_config c;
+        if (zmk_behavior_hold_tap_get_config((zmk_behavior_local_id_t)lid, &c) == 0) {
+            resp.which_config = zmk_behaviors_GetBehaviorConfigResponse_hold_tap_tag;
+            resp.config.hold_tap.tapping_term_ms = c.tapping_term_ms;
+            resp.config.hold_tap.flavor = (zmk_behaviors_HoldTapFlavor_Flavor)c.flavor;
+            resp.config.hold_tap.require_prior_idle_ms = c.require_prior_idle_ms;
+            resp.config.hold_tap.quick_tap_ms = c.quick_tap_ms;
+            resp.config.hold_tap.retro_tap = c.retro_tap;
+            resp.config.hold_tap.hold_while_undecided = c.hold_while_undecided;
+            resp.config.hold_tap.hold_while_undecided_linger = c.hold_while_undecided_linger;
+            resp.config.hold_tap.hold_trigger_on_release = c.hold_trigger_on_release;
+        }
+    }
+
+    return BEHAVIOR_RESPONSE(get_behavior_config, resp);
+}
+
+zmk_studio_Response set_behavior_config(const zmk_studio_Request *req) {
+    const zmk_behaviors_SetBehaviorConfigRequest *set_req =
+        &req->subsystem.behaviors.request_type.set_behavior_config;
+
+    if (set_req->which_config != zmk_behaviors_SetBehaviorConfigRequest_hold_tap_tag) {
+        return BEHAVIOR_RESPONSE(set_behavior_config, false);
+    }
+
+    struct zmk_hold_tap_pub_config c = {
+        .tapping_term_ms = set_req->config.hold_tap.tapping_term_ms,
+        .require_prior_idle_ms = set_req->config.hold_tap.require_prior_idle_ms,
+        .quick_tap_ms = set_req->config.hold_tap.quick_tap_ms,
+        .flavor = (uint8_t)set_req->config.hold_tap.flavor,
+        .retro_tap = set_req->config.hold_tap.retro_tap,
+        .hold_while_undecided = set_req->config.hold_tap.hold_while_undecided,
+        .hold_while_undecided_linger = set_req->config.hold_tap.hold_while_undecided_linger,
+        .hold_trigger_on_release = set_req->config.hold_tap.hold_trigger_on_release,
+    };
+
+    int rc = zmk_behavior_hold_tap_set_config((zmk_behavior_local_id_t)set_req->behavior_id, &c);
+    if (rc < 0) {
+        return BEHAVIOR_RESPONSE(set_behavior_config, false);
+    }
+
+    raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
+        .notification = ZMK_RPC_NOTIFICATION(keymap, unsaved_changes_status_changed, true)});
+
+    return BEHAVIOR_RESPONSE(set_behavior_config, true);
+}
+
 ZMK_RPC_SUBSYSTEM_HANDLER(behaviors, list_all_behaviors, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(behaviors, get_behavior_details, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(behaviors, get_behavior_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(behaviors, set_behavior_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+
+static int behaviors_settings_reset(void) {
+    return zmk_behavior_hold_tap_settings_reset();
+}
+
+ZMK_RPC_SUBSYSTEM_SETTINGS_RESET(behaviors, behaviors_settings_reset);
