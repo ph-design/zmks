@@ -5,6 +5,7 @@
  */
 
 #include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <drivers/behavior.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
@@ -36,9 +37,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
                  (LISTIFY(DT_PROP_LEN(node, bindings), ZMK_RGBMAP_EXTRACT_BINDING, (, ), node)),   \
                  ())}
 
+#define RGB_LAYER_BY_ID(node) [LAYER_ID(node)] = TRANSFORMED_RGB_LAYER(node)
+
 #define RGBMAP_VAR(_name, _opts)                                                                   \
-    static _opts struct zmk_behavior_binding _name[ZMK_RGBMAP_LAYERS_LEN][ZMK_KEYMAP_LEN] = {      \
-        DT_INST_FOREACH_CHILD_STATUS_OKAY_SEP(0, TRANSFORMED_RGB_LAYER, (, ))};
+    static _opts struct zmk_behavior_binding _name[ZMK_KEYMAP_LAYERS_LEN][ZMK_KEYMAP_LEN] = {      \
+        DT_INST_FOREACH_CHILD_STATUS_OKAY_SEP(0, RGB_LAYER_BY_ID, (, ))};
 
 RGBMAP_VAR(zmk_rgbmap, COND_CODE_1(IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE), (), (const)))
 
@@ -68,7 +71,9 @@ static int zmk_rgbmap_fds[ZMK_RGBMAP_LAYERS_LEN] = {DT_INST_FOREACH_CHILD_SEP(0,
 
 const int rgb_pixel_lookup(int idx) { return pixel_lookup_table[idx]; };
 
-const int zmk_rgbmap_id(uint8_t layer) {
+const int zmk_rgbmap_id(uint8_t layer) { return (layer < ZMK_KEYMAP_LAYERS_LEN) ? layer : -1; }
+
+static int zmk_rgbmap_dt_slot(uint8_t layer) {
     for (uint8_t i = 0; i < ZMK_RGBMAP_LAYERS_LEN; i++) {
         if (zmk_rgbmap_ids[i] == layer) {
             return i;
@@ -77,7 +82,10 @@ const int zmk_rgbmap_id(uint8_t layer) {
     return -1;
 }
 
-const int zmk_rgbmap_fade_delay(uint8_t layer) { return zmk_rgbmap_fds[zmk_rgbmap_id(layer)]; }
+const int zmk_rgbmap_fade_delay(uint8_t layer) {
+    int slot = zmk_rgbmap_dt_slot(layer);
+    return (slot < 0) ? -1 : zmk_rgbmap_fds[slot];
+}
 
 const struct zmk_behavior_binding *rgb_underglow_get_bindings(uint8_t layer) {
     int rgblayer = zmk_rgbmap_id(layer);
@@ -101,7 +109,7 @@ uint8_t rgb_underglow_top_layer(void) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT) && !IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
     return peripheral_highest_layer_active();
 #else
-    return zmk_keymap_highest_layer_active();
+    return zmk_keymap_layer_index_to_id(zmk_keymap_highest_layer_active());
 #endif
 }
 
@@ -187,15 +195,20 @@ int zmk_rgb_layer_set_binding(uint8_t layer_id, uint8_t key_pos, uint32_t color)
 int zmk_rgb_layer_save(void) {
     char key[20];
 
-    for (int l = 0; l < ZMK_RGBMAP_LAYERS_LEN; l++) {
+    for (int l = 0; l < ZMK_KEYMAP_LAYERS_LEN; l++) {
         uint32_t colors[ZMK_KEYMAP_LEN];
+        bool any = false;
         for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
             colors[k] = zmk_rgbmap[l][k].param1;
+            if (colors[k] != 0) {
+                any = true;
+            }
         }
 
         snprintf(key, sizeof(key), RGB_LAYER_SETTINGS_KEY, l);
-        int ret = settings_save_one(key, colors, sizeof(colors));
-        if (ret < 0) {
+
+        int ret = any ? settings_save_one(key, colors, sizeof(colors)) : settings_delete(key);
+        if (ret < 0 && ret != -ENOENT) {
             LOG_ERR("Failed to save RGB layer %d: %d", l, ret);
             return ret;
         }
@@ -212,15 +225,15 @@ int zmk_rgb_layer_save(void) {
     return 0;
 }
 
-uint8_t zmk_rgb_layer_count(void) { return ZMK_RGBMAP_LAYERS_LEN; }
+uint8_t zmk_rgb_layer_count(void) { return ZMK_KEYMAP_LAYERS_LEN; }
 
 uint8_t zmk_rgb_layer_key_count(void) { return ZMK_KEYMAP_LEN; }
 
 int zmk_rgb_layer_id(uint8_t rgblayer_idx) {
-    if (rgblayer_idx >= ZMK_RGBMAP_LAYERS_LEN) {
+    if (rgblayer_idx >= ZMK_KEYMAP_LAYERS_LEN) {
         return -EINVAL;
     }
-    return zmk_rgbmap_ids[rgblayer_idx];
+    return rgblayer_idx;
 }
 
 static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb read_cb,
@@ -244,7 +257,7 @@ static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb
     }
 
     unsigned int layer_idx = atoi(name);
-    if (layer_idx >= ZMK_RGBMAP_LAYERS_LEN) {
+    if (layer_idx >= ZMK_KEYMAP_LAYERS_LEN) {
         LOG_WRN("RGB layer index %u out of range", layer_idx);
         return -EINVAL;
     }
@@ -254,6 +267,10 @@ static int rgb_layer_settings_set(const char *name, size_t len, settings_read_cb
     if (rc <= 0) {
         LOG_ERR("Failed to read RGB layer %u settings (err %d)", layer_idx, rc);
         return rc;
+    }
+    if ((size_t)rc != sizeof(colors)) {
+        LOG_WRN("Discarding RGB layer %u settings of unexpected size %d", layer_idx, rc);
+        return 0;
     }
 
     for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
@@ -267,7 +284,7 @@ SETTINGS_STATIC_HANDLER_DEFINE(rgb_layer, "rgb/layer", NULL, rgb_layer_settings_
 
 int zmk_rgb_layer_settings_reset(void) {
     char key[20];
-    for (int l = 0; l < ZMK_RGBMAP_LAYERS_LEN; l++) {
+    for (int l = 0; l < ZMK_KEYMAP_LAYERS_LEN; l++) {
         snprintf(key, sizeof(key), RGB_LAYER_SETTINGS_KEY, l);
         int ret = settings_delete(key);
         if (ret < 0 && ret != -ENOENT) {
@@ -278,6 +295,40 @@ int zmk_rgb_layer_settings_reset(void) {
     layer_led_enabled = true;
     return 0;
 }
+
+static int rgb_layer_seed_bindings(void) {
+    const char *color_dev = NULL;
+
+    for (int l = 0; l < ZMK_KEYMAP_LAYERS_LEN && color_dev == NULL; l++) {
+        for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
+            if (zmk_rgbmap[l][k].behavior_dev != NULL) {
+                color_dev = zmk_rgbmap[l][k].behavior_dev;
+                break;
+            }
+        }
+    }
+
+#if DT_NODE_EXISTS(DT_NODELABEL(ug))
+    if (color_dev == NULL) {
+        color_dev = DEVICE_DT_NAME(DT_NODELABEL(ug));
+    }
+#endif
+
+    if (color_dev == NULL) {
+        return 0;
+    }
+
+    for (int l = 0; l < ZMK_KEYMAP_LAYERS_LEN; l++) {
+        for (int k = 0; k < ZMK_KEYMAP_LEN; k++) {
+            if (zmk_rgbmap[l][k].behavior_dev == NULL) {
+                zmk_rgbmap[l][k].behavior_dev = color_dev;
+            }
+        }
+    }
+    return 0;
+}
+
+SYS_INIT(rgb_layer_seed_bindings, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 #endif /* CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE */
 
