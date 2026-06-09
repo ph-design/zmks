@@ -30,4 +30,3 @@
 #include <behaviors/mouse_keys.dtsi>
 #include <behaviors/ug_color.dtsi>
 #include <behaviors/ug_indicators.dtsi>
-#include <behaviors/ug_battery.dtsi>
