@@ -39,10 +39,30 @@ static uint32_t rx_decrypt_fail;
 static struct k_work_delayable kb_lost_work;
 
 static void kb_lost_handler(struct k_work *work) {
-    if (kb_connected) {
-        kb_connected = false;
-        LOG_INF("2.4G keyboard lost (rx_total=%u, decrypt_fail=%u)", rx_total, rx_decrypt_fail);
+    if (!kb_connected) {
+        return;
     }
+    kb_connected = false;
+    LOG_INF("2.4G keyboard lost (rx_total=%u, decrypt_fail=%u)", rx_total, rx_decrypt_fail);
+
+    if (zmk_usb_get_status() == USB_DC_SUSPEND) {
+        return;
+    }
+
+    zmk_hid_keyboard_clear();
+    zmk_hid_consumer_clear();
+    if (zmk_usb_hid_send_keyboard_report()) {
+        LOG_WRN("release-all keyboard report failed");
+    }
+    if (zmk_usb_hid_send_consumer_report()) {
+        LOG_WRN("release-all consumer report failed");
+    }
+#if IS_ENABLED(CONFIG_ZMK_POINTING)
+    zmk_hid_mouse_clear();
+    if (zmk_usb_hid_send_mouse_report()) {
+        LOG_WRN("release-all mouse report failed");
+    }
+#endif
 }
 
 static void process_rx_payload(const struct zmk_esb_payload *rx) {
