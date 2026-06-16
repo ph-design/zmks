@@ -11,6 +11,10 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <hal/nrf_ccm.h>
+#include <zephyr/sys/crc.h>
+#if IS_ENABLED(CONFIG_SETTINGS)
+#include <zephyr/settings/settings.h>
+#endif
 #include <zmk/2g4_crypto.h>
 
 #include <zephyr/logging/log.h>
@@ -27,15 +31,20 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CCM_PDU_HDR 3
 #define CCM_MAX_PAYLOAD 23
 #define CCM_SCRATCH_SIZE 43
+#define REPLAY_WINDOW 64
 
 static const char *key_hex = CONFIG_ZMK_2G4_AES_KEY;
+static uint8_t factory_key[AES_KEY_SIZE];
+static bool factory_valid;
 static uint8_t aes_key[AES_KEY_SIZE];
 static bool key_valid;
+static bool using_paired;
 static bool ccm_ok;
 static uint32_t tx_session_id;
 static uint32_t tx_counter;
 static uint32_t rx_session_id;
 static uint32_t rx_counter;
+static uint64_t rx_window;
 static bool rx_session_init;
 
 static struct k_spinlock ccm_lock;
@@ -56,7 +65,7 @@ static int parse_hex_key(void) {
     if (strlen(key_hex) != 32) {
         return -EINVAL;
     }
-    if (hex2bin(key_hex, 32, aes_key, AES_KEY_SIZE) != AES_KEY_SIZE) {
+    if (hex2bin(key_hex, 32, factory_key, AES_KEY_SIZE) != AES_KEY_SIZE) {
         return -EINVAL;
     }
     return 0;
@@ -187,21 +196,20 @@ static bool ccm_self_test(void) {
 }
 
 static int zmk_2g4_crypto_init(void) {
-    if (strlen(key_hex) == 0) {
-        key_valid = false;
-        return 0;
-    }
-    if (parse_hex_key()) {
-        LOG_ERR("Invalid 2.4G AES key (need 32 hex chars)");
-        key_valid = false;
-        return 0;
-    }
-    key_valid = true;
-
     ccm_ok = ccm_self_test();
     if (!ccm_ok) {
         LOG_ERR("2.4G CCM self-test failed; encryption disabled");
         return 0;
+    }
+
+    if (strlen(key_hex) > 0) {
+        if (parse_hex_key()) {
+            LOG_ERR("Invalid 2.4G AES key (need 32 hex chars)");
+        } else {
+            factory_valid = true;
+            memcpy(aes_key, factory_key, AES_KEY_SIZE);
+            key_valid = true;
+        }
     }
 
     do {
@@ -217,6 +225,68 @@ SYS_INIT(zmk_2g4_crypto_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 bool zmk_2g4_crypto_enabled(void) { return key_valid && ccm_ok; }
 
 uint32_t zmk_2g4_crypto_tx_session_id(void) { return tx_session_id; }
+
+bool zmk_2g4_crypto_uses_factory_key(void) { return key_valid && !using_paired; }
+
+bool zmk_2g4_crypto_has_paired_key(void) { return using_paired; }
+
+uint32_t zmk_2g4_crypto_key_id(void) {
+    if (!key_valid) {
+        return 0;
+    }
+    return crc32_ieee(aes_key, AES_KEY_SIZE);
+}
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+static int key_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    if (!settings_name_steq(name, "key", NULL)) {
+        return -ENOENT;
+    }
+    if (len != AES_KEY_SIZE) {
+        return -EINVAL;
+    }
+    uint8_t buf[AES_KEY_SIZE];
+    if (read_cb(cb_arg, buf, sizeof(buf)) != AES_KEY_SIZE) {
+        return -EIO;
+    }
+    memcpy(aes_key, buf, AES_KEY_SIZE);
+    key_valid = true;
+    using_paired = true;
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(zmk_2g4, "2g4", NULL, key_settings_set, NULL, NULL);
+
+int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
+    int ret = settings_save_one("2g4/key", key, AES_KEY_SIZE);
+    if (ret) {
+        return ret;
+    }
+    memcpy(aes_key, key, AES_KEY_SIZE);
+    key_valid = true;
+    using_paired = true;
+    return 0;
+}
+
+int zmk_2g4_crypto_clear_paired_key(void) {
+    settings_delete("2g4/key");
+    using_paired = false;
+    if (factory_valid) {
+        memcpy(aes_key, factory_key, AES_KEY_SIZE);
+        key_valid = true;
+    } else {
+        key_valid = false;
+    }
+    return 0;
+}
+#else
+int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
+    ARG_UNUSED(key);
+    return -ENOTSUP;
+}
+
+int zmk_2g4_crypto_clear_paired_key(void) { return -ENOTSUP; }
+#endif
 
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     __ASSERT_NO_MSG(data != NULL);
@@ -251,6 +321,25 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     return (int)(len + OVERHEAD);
 }
 
+static bool replay_accept(uint32_t ctr) {
+    if (ctr > rx_counter) {
+        uint32_t shift = ctr - rx_counter;
+        rx_window = (shift >= REPLAY_WINDOW) ? 0 : (rx_window << shift);
+        rx_window |= 1ULL;
+        rx_counter = ctr;
+        return true;
+    }
+    uint32_t diff = rx_counter - ctr;
+    if (diff >= REPLAY_WINDOW) {
+        return false;
+    }
+    if (rx_window & (1ULL << diff)) {
+        return false;
+    }
+    rx_window |= (1ULL << diff);
+    return true;
+}
+
 int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     __ASSERT_NO_MSG(data != NULL);
 
@@ -280,7 +369,7 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     }
 
     bool new_session = !rx_session_init || (session_id != rx_session_id);
-    if (!new_session && (int32_t)(ctr - rx_counter) <= 0) {
+    if (!new_session && !replay_accept(ctr)) {
         return -EACCES;
     }
 
@@ -289,8 +378,9 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     if (new_session) {
         rx_session_id = session_id;
         rx_session_init = true;
+        rx_counter = ctr;
+        rx_window = 1ULL;
     }
-    rx_counter = ctr;
 
     return (int)ct_len;
 }
