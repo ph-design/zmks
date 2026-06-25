@@ -208,6 +208,7 @@ int zmk_2g4_start(void) {
     ready = true;
     LOG_INF("2.4G transport started");
 
+    zmk_2g4_crypto_session_start();
     send_boot_announcement();
 
     /* Start periodic keepalive to prevent dongle timeout */

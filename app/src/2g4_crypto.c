@@ -38,10 +38,13 @@ static uint8_t factory_key[AES_KEY_SIZE];
 static bool factory_valid;
 static uint8_t aes_key[AES_KEY_SIZE];
 static bool key_valid;
+static bool key_provisioned;
 static bool using_paired;
 static bool ccm_ok;
 static uint32_t tx_session_id;
+static uint32_t tx_epoch;
 static uint32_t tx_counter;
+static bool session_started;
 static uint32_t rx_session_id;
 static uint32_t rx_counter;
 static uint64_t rx_window;
@@ -209,12 +212,11 @@ static int zmk_2g4_crypto_init(void) {
             factory_valid = true;
             memcpy(aes_key, factory_key, AES_KEY_SIZE);
             key_valid = true;
+            key_provisioned = true;
         }
     }
 
-    do {
-        tx_session_id = sys_rand32_get();
-    } while (tx_session_id == 0);
+    tx_session_id = 1;
 
     LOG_INF("2.4G AES-CCM enabled");
     return 0;
@@ -238,24 +240,35 @@ uint32_t zmk_2g4_crypto_key_id(void) {
 }
 
 #if IS_ENABLED(CONFIG_SETTINGS)
-static int key_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
-    if (!settings_name_steq(name, "key", NULL)) {
-        return -ENOENT;
+static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    if (settings_name_steq(name, "key", NULL)) {
+        if (len != AES_KEY_SIZE) {
+            LOG_ERR("2.4G stored key has wrong length %u", (unsigned int)len);
+            return -EINVAL;
+        }
+        uint8_t buf[AES_KEY_SIZE];
+        if (read_cb(cb_arg, buf, sizeof(buf)) != AES_KEY_SIZE) {
+            return -EIO;
+        }
+        memcpy(aes_key, buf, AES_KEY_SIZE);
+        key_valid = true;
+        key_provisioned = true;
+        using_paired = true;
+        return 0;
     }
-    if (len != AES_KEY_SIZE) {
-        return -EINVAL;
+    if (settings_name_steq(name, "tx_epoch", NULL)) {
+        if (len != sizeof(tx_epoch)) {
+            return -EINVAL;
+        }
+        if (read_cb(cb_arg, &tx_epoch, sizeof(tx_epoch)) != sizeof(tx_epoch)) {
+            return -EIO;
+        }
+        return 0;
     }
-    uint8_t buf[AES_KEY_SIZE];
-    if (read_cb(cb_arg, buf, sizeof(buf)) != AES_KEY_SIZE) {
-        return -EIO;
-    }
-    memcpy(aes_key, buf, AES_KEY_SIZE);
-    key_valid = true;
-    using_paired = true;
-    return 0;
+    return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(zmk_2g4, "2g4", NULL, key_settings_set, NULL, NULL);
+SETTINGS_STATIC_HANDLER_DEFINE(zmk_2g4, "2g4", NULL, settings_set_2g4, NULL, NULL);
 
 int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
     int ret = settings_save_one("2g4/key", key, AES_KEY_SIZE);
@@ -264,12 +277,16 @@ int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
     }
     memcpy(aes_key, key, AES_KEY_SIZE);
     key_valid = true;
+    key_provisioned = true;
     using_paired = true;
     return 0;
 }
 
 int zmk_2g4_crypto_clear_paired_key(void) {
-    settings_delete("2g4/key");
+    int ret = settings_delete("2g4/key");
+    if (ret) {
+        return ret;
+    }
     using_paired = false;
     if (factory_valid) {
         memcpy(aes_key, factory_key, AES_KEY_SIZE);
@@ -288,11 +305,34 @@ int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
 int zmk_2g4_crypto_clear_paired_key(void) { return -ENOTSUP; }
 #endif
 
+void zmk_2g4_crypto_session_start(void) {
+    if (session_started) {
+        return;
+    }
+    session_started = true;
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    tx_session_id = tx_epoch + 1;
+    if (tx_session_id == 0) {
+        tx_session_id = 1;
+    }
+    tx_epoch = tx_session_id;
+    int ret = settings_save_one("2g4/tx_epoch", &tx_session_id, sizeof(tx_session_id));
+    if (ret) {
+        LOG_ERR("2.4G tx_epoch persist failed: %d", ret);
+    }
+#else
+    do {
+        tx_session_id = sys_rand32_get();
+    } while (tx_session_id == 0);
+#endif
+}
+
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     __ASSERT_NO_MSG(data != NULL);
 
     if (!key_valid) {
-        return (int)len;
+        return key_provisioned ? -EACCES : (int)len;
     }
     if (!ccm_ok) {
         return -EIO;
@@ -300,17 +340,22 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     if (len + OVERHEAD > buf_size) {
         return -ENOMEM;
     }
-    if (tx_counter == 0xFFFFFFFFu) {
-        LOG_ERR("TX counter exhausted, re-key required");
+
+    k_spinlock_key_t lock = k_spin_lock(&ccm_lock);
+    uint32_t ctr = tx_counter;
+    if (ctr != 0xFFFFFFFFu) {
+        tx_counter = ctr + 1;
+    }
+    k_spin_unlock(&ccm_lock, lock);
+    if (ctr == 0xFFFFFFFFu) {
+        LOG_ERR("2.4G TX counter exhausted, reboot required");
         return -ERANGE;
     }
 
-    uint32_t ctr = tx_counter++;
     uint8_t ct_mic[CCM_MAX_PAYLOAD + MIC_SIZE];
 
     int ret = ccm_encrypt_payload(aes_key, tx_session_id, ctr, CCM_DIR_DATA, data, len, ct_mic);
     if (ret) {
-        tx_counter--;
         return ret;
     }
 
@@ -344,7 +389,7 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     __ASSERT_NO_MSG(data != NULL);
 
     if (!key_valid) {
-        return (int)len;
+        return key_provisioned ? -EACCES : (int)len;
     }
     if (!ccm_ok) {
         return -EIO;
@@ -369,7 +414,11 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     }
 
     bool new_session = !rx_session_init || (session_id != rx_session_id);
-    if (!new_session && !replay_accept(ctr)) {
+    if (new_session) {
+        if (rx_session_init && (int32_t)(session_id - rx_session_id) <= 0) {
+            return -EACCES;
+        }
+    } else if (!replay_accept(ctr)) {
         return -EACCES;
     }
 
