@@ -130,8 +130,6 @@ config ZMK_USB_BOOT
     depends on ZMK_USB
     select USB_HID_BOOT_PROTOCOL
 
-select USB_DEVICE_SOF
-
 if ZMK_USB
 
 config USB_NUMOF_EP_WRITE_RETRIES
