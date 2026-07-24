@@ -191,22 +191,22 @@ int zmk_2g4_start(void) {
         return ret;
     }
 
-    uint8_t base_addr[] = {
-        CONFIG_ZMK_2G4_ADDR_BASE_0,
-        CONFIG_ZMK_2G4_ADDR_BASE_1,
-        CONFIG_ZMK_2G4_ADDR_BASE_2,
-        CONFIG_ZMK_2G4_ADDR_BASE_3,
-    };
-    zmk_esb_set_base_address_0(base_addr);
+    uint8_t base_addr[4];
+    uint8_t prefix[1];
+    struct zmk_2g4_addr addr;
+    zmk_2g4_addr_get(&addr);
+    memcpy(base_addr, addr.base, sizeof(base_addr));
+    prefix[0] = addr.prefix;
 
-    uint8_t prefix[] = {CONFIG_ZMK_2G4_ADDR_PREFIX};
+    zmk_esb_set_base_address_0(base_addr);
     zmk_esb_set_prefixes(prefix, 1);
 
-    zmk_esb_set_rf_channel(CONFIG_ZMK_2G4_RF_CHANNEL);
+    zmk_esb_set_rf_channel(addr.rf_channel);
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ready = true;
-    LOG_INF("2.4G transport started");
+    LOG_INF("2.4G transport started (%s addr, ch=%u)", zmk_2g4_addr_is_paired() ? "paired" : "default",
+            addr.rf_channel);
 
     zmk_2g4_crypto_session_start();
     send_boot_announcement();

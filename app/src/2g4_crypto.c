@@ -239,6 +239,28 @@ uint32_t zmk_2g4_crypto_key_id(void) {
     return crc32_ieee(aes_key, AES_KEY_SIZE);
 }
 
+static struct zmk_2g4_addr paired_addr;
+static bool addr_paired;
+
+void zmk_2g4_addr_get_default(struct zmk_2g4_addr *addr) {
+    addr->base[0] = CONFIG_ZMK_2G4_ADDR_BASE_0;
+    addr->base[1] = CONFIG_ZMK_2G4_ADDR_BASE_1;
+    addr->base[2] = CONFIG_ZMK_2G4_ADDR_BASE_2;
+    addr->base[3] = CONFIG_ZMK_2G4_ADDR_BASE_3;
+    addr->prefix = CONFIG_ZMK_2G4_ADDR_PREFIX;
+    addr->rf_channel = CONFIG_ZMK_2G4_RF_CHANNEL;
+}
+
+bool zmk_2g4_addr_is_paired(void) { return addr_paired; }
+
+void zmk_2g4_addr_get(struct zmk_2g4_addr *addr) {
+    if (addr_paired) {
+        memcpy(addr, &paired_addr, sizeof(*addr));
+    } else {
+        zmk_2g4_addr_get_default(addr);
+    }
+}
+
 #if IS_ENABLED(CONFIG_SETTINGS)
 static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     if (settings_name_steq(name, "key", NULL)) {
@@ -254,6 +276,16 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
         key_valid = true;
         key_provisioned = true;
         using_paired = true;
+        return 0;
+    }
+    if (settings_name_steq(name, "addr", NULL)) {
+        if (len != ZMK_2G4_ADDR_LEN) {
+            return -EINVAL;
+        }
+        if (read_cb(cb_arg, &paired_addr, ZMK_2G4_ADDR_LEN) != ZMK_2G4_ADDR_LEN) {
+            return -EIO;
+        }
+        addr_paired = true;
         return 0;
     }
     if (settings_name_steq(name, "tx_epoch", NULL)) {
@@ -296,6 +328,25 @@ int zmk_2g4_crypto_clear_paired_key(void) {
     }
     return 0;
 }
+
+int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
+    int ret = settings_save_one("2g4/addr", addr, ZMK_2G4_ADDR_LEN);
+    if (ret) {
+        return ret;
+    }
+    memcpy(&paired_addr, addr, sizeof(paired_addr));
+    addr_paired = true;
+    return 0;
+}
+
+int zmk_2g4_addr_clear_paired(void) {
+    int ret = settings_delete("2g4/addr");
+    if (ret) {
+        return ret;
+    }
+    addr_paired = false;
+    return 0;
+}
 #else
 int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
     ARG_UNUSED(key);
@@ -303,6 +354,13 @@ int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
 }
 
 int zmk_2g4_crypto_clear_paired_key(void) { return -ENOTSUP; }
+
+int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
+    ARG_UNUSED(addr);
+    return -ENOTSUP;
+}
+
+int zmk_2g4_addr_clear_paired(void) { return -ENOTSUP; }
 #endif
 
 void zmk_2g4_crypto_session_start(void) {

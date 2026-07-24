@@ -21,3 +21,17 @@ int zmk_2g4_crypto_clear_paired_key(void);
 bool zmk_2g4_crypto_uses_factory_key(void);
 bool zmk_2g4_crypto_has_paired_key(void);
 uint32_t zmk_2g4_crypto_key_id(void);
+
+#define ZMK_2G4_ADDR_LEN 6
+
+struct zmk_2g4_addr {
+    uint8_t base[4];
+    uint8_t prefix;
+    uint8_t rf_channel;
+} __packed;
+
+void zmk_2g4_addr_get_default(struct zmk_2g4_addr *addr);
+bool zmk_2g4_addr_is_paired(void);
+void zmk_2g4_addr_get(struct zmk_2g4_addr *addr);
+int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr);
+int zmk_2g4_addr_clear_paired(void);
