@@ -25,3 +25,13 @@ child-binding:
       type: boolean
     layers:
       type: array
+    reserved:
+      type: boolean
+      description: |
+        Marks this combo slot as reserved for runtime use (e.g. ZMK Studio).
+        Reserved slots keep their position in the combos array so that
+        ZMK_VIRTUAL_KEY_POSITION_COMBO(index) and downstream virtual key
+        positions stay fixed, but are disabled at boot: their key positions
+        only serve to size MAX_COMBO_KEYS and are not entered into the combo
+        lookup table. A runtime config write (assigning real key positions)
+        enables the slot.
