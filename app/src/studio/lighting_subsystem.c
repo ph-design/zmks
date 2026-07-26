@@ -28,22 +28,23 @@ ZMK_RPC_SUBSYSTEM(lighting)
 static const char *const effect_names[] = {
     "Solid",
     "Breathing",
+    "Spectrum",
     "Rainbow",
-    "Reactive",
+    "Gradient",
     "Wave",
     "Knight",
     "Twinkle",
-    "Gradient",
     "Sparkle",
-    "Ripple",
-    "Alphas Mods",
     "Raindrops",
+    "Alphas Mods",
+    "Reactive",
+    "Ripple",
     "Reactive Wide",
     "Reactive Nexus",
     "Typing Heatmap",
 };
 
-BUILD_ASSERT(ARRAY_SIZE(effect_names) == 15,
+BUILD_ASSERT(ARRAY_SIZE(effect_names) == 16,
              "effect_names array size must match UNDERGLOW_EFFECT_NUMBER");
 
 static bool encode_effect_names(pb_ostream_t *stream, const pb_field_t *field,

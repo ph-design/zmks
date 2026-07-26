@@ -240,28 +240,23 @@ static struct color_hsl hsb_to_hsl(struct zmk_led_hsb hsb) {
 /* ========================================================================= */
 
 enum rgb_underglow_effect {
-    /* Minimal / cleaned effect list per request */
-    UNDERGLOW_EFFECT_SOLID,     /* Static / solid */
-    UNDERGLOW_EFFECT_BREATHING, /* Breathing */
-    UNDERGLOW_EFFECT_RAINBOW,   /* Hue cycle / rainbow */
-    /* Map REACTIVE to enhanced implementation */
-    UNDERGLOW_EFFECT_REACTIVE, /* Reactive (uses enhanced implementation) */
-    UNDERGLOW_EFFECT_WAVE,     /* Wave */
-    UNDERGLOW_EFFECT_KNIGHT,   /* Knight rider */
-    UNDERGLOW_EFFECT_TWINKLE,  /* Twinkle / glitter */
-
-    /* Preserved non-interactive effects */
-    UNDERGLOW_EFFECT_GRADIENT, /* Linear gradient with scrolling */
-    UNDERGLOW_EFFECT_SPARKLE,  /* Random sparkle */
-    UNDERGLOW_EFFECT_RIPPLE,   /* Keypress ripple */
-
-    /* New effects (QMK-inspired) */
-    UNDERGLOW_EFFECT_ALPHAS_MODS,    /* Dual-hue alpha/modifier split */
-    UNDERGLOW_EFFECT_RAINDROPS,      /* Random hue raindrops */
-    UNDERGLOW_EFFECT_REACTIVE_WIDE,  /* Wide radial reactive pulse */
-    UNDERGLOW_EFFECT_REACTIVE_NEXUS, /* Cross/nexus reactive pulse */
-    UNDERGLOW_EFFECT_TYPING_HEATMAP, /* Typing heatmap */
-
+    UNDERGLOW_EFFECT_SOLID,        /*  0  Static / solid */
+    UNDERGLOW_EFFECT_BREATHING,    /*  1  Breathing (parabolic pulse) */
+    UNDERGLOW_EFFECT_SPECTRUM,     /*  2  All LEDs same hue, cycling */
+    UNDERGLOW_EFFECT_RAINBOW,      /*  3  Hue gradient across strip */
+    UNDERGLOW_EFFECT_GRADIENT,     /*  4  Dual-colour linear gradient */
+    UNDERGLOW_EFFECT_WAVE,         /*  5  Wave */
+    UNDERGLOW_EFFECT_KNIGHT,       /*  6  Knight rider */
+    UNDERGLOW_EFFECT_TWINKLE,      /*  7  Twinkle / glitter */
+    UNDERGLOW_EFFECT_SPARKLE,      /*  8  Sparkle */
+    UNDERGLOW_EFFECT_RAINDROPS,    /*  9  Raindrops */
+    UNDERGLOW_EFFECT_ALPHAS_MODS,  /* 10  Dual-hue alpha/modifier split */
+    UNDERGLOW_EFFECT_REACTIVE,        /* 11  Reactive keypress (enhanced) */
+    UNDERGLOW_EFFECT_RIPPLE,          /* 12  Keypress ripple */
+    UNDERGLOW_EFFECT_REACTIVE_WIDE,   /* 13  Wide radial reactive pulse */
+    UNDERGLOW_EFFECT_REACTIVE_NEXUS,  /* 14  Cross/nexus reactive pulse */
+    UNDERGLOW_EFFECT_TYPING_HEATMAP,  /* 15  Typing heatmap */
+    
     UNDERGLOW_EFFECT_NUMBER
 };
 
@@ -447,21 +442,30 @@ static inline float anim_speed(void) {
  *   - on_keypress handler (optional, for key-interactive effects)
  *   - reset function      (optional, to clear effect state)
  */
+/* ── Static ─────────────────────────────────────────── */
 #include "rgb_effects/effect_solid.inc.c"
+
+/* ── Simple animation ───────────────────────────────── */
 #include "rgb_effects/effect_breathing.inc.c"
+
+/* ── Hue-based animations ───────────────────────────── */
+#include "rgb_effects/effect_spectrum.inc.c"
 #include "rgb_effects/effect_rainbow.inc.c"
-#include "rgb_effects/effect_reactive_enhanced.inc.c"
+#include "rgb_effects/effect_gradient.inc.c"
+
+/* ── Pattern / spatial animations ───────────────────── */
 #include "rgb_effects/effect_wave.inc.c"
 #include "rgb_effects/effect_knight.inc.c"
 #include "rgb_effects/effect_twinkle.inc.c"
-
-#include "rgb_effects/effect_gradient.inc.c"
 #include "rgb_effects/effect_sparkle.inc.c"
-#include "rgb_effects/effect_ripple.inc.c"
-
-/* New QMK-inspired effects */
-#include "rgb_effects/effect_alphas_mods.inc.c"
 #include "rgb_effects/effect_raindrops.inc.c"
+
+/* ── Hybrid / static-split ──────────────────────────── */
+#include "rgb_effects/effect_alphas_mods.inc.c"
+
+/* ── Key-interactive effects ────────────────────────── */
+#include "rgb_effects/effect_reactive_enhanced.inc.c"
+#include "rgb_effects/effect_ripple.inc.c"
 #include "rgb_effects/effect_reactive_wide.inc.c"
 #include "rgb_effects/effect_reactive_nexus.inc.c"
 #include "rgb_effects/effect_typing_heatmap.inc.c"
@@ -490,34 +494,42 @@ struct rgb_effect_desc {
 };
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
+    /* ── Static ─────────────────────────────────────────── */
     [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid},
+
+    /* ── Simple animation ───────────────────────────────── */
     [UNDERGLOW_EFFECT_BREATHING] = {.render = zmk_rgb_underglow_effect_breathing,
                                     .reset = breathing_reset},
+
+    /* ── Hue-based animations ───────────────────────────── */
+    [UNDERGLOW_EFFECT_SPECTRUM] = {.render = zmk_rgb_underglow_effect_spectrum,
+                                   .reset = spectrum_reset},
     [UNDERGLOW_EFFECT_RAINBOW] = {.render = zmk_rgb_underglow_effect_rainbow,
                                   .reset = rainbow_reset},
-    /* REACTIVE uses the enhanced implementation and keypress handler */
-    [UNDERGLOW_EFFECT_REACTIVE] = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
-                                   .on_keypress = reactive_add_event,
-                                   .reset = reactive_enhanced_reset},
+    [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
+                                   .reset = gradient_reset},
+
+    /* ── Pattern / spatial animations ───────────────────── */
     [UNDERGLOW_EFFECT_WAVE] = {.render = zmk_rgb_underglow_effect_wave, .reset = wave_reset},
     [UNDERGLOW_EFFECT_KNIGHT] = {.render = zmk_rgb_underglow_effect_knight, .reset = knight_reset},
     [UNDERGLOW_EFFECT_TWINKLE] = {.render = zmk_rgb_underglow_effect_twinkle,
                                   .reset = twinkle_reset},
-
-    /* Existing ones preserved */
-    [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
-                                   .reset = gradient_reset},
     [UNDERGLOW_EFFECT_SPARKLE] = {.render = zmk_rgb_underglow_effect_sparkle,
                                   .reset = sparkle_init_all},
+    [UNDERGLOW_EFFECT_RAINDROPS] = {.render = zmk_rgb_underglow_effect_raindrops,
+                                    .reset = raindrops_reset},
+
+    /* ── Hybrid / static-split ──────────────────────────── */
+    [UNDERGLOW_EFFECT_ALPHAS_MODS] = {.render = zmk_rgb_underglow_effect_alphas_mods,
+                                      .reset = alphas_mods_reset},
+
+    /* ── Key-interactive effects ────────────────────────── */
+    [UNDERGLOW_EFFECT_REACTIVE] = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
+                                   .on_keypress = reactive_add_event,
+                                   .reset = reactive_enhanced_reset},
     [UNDERGLOW_EFFECT_RIPPLE] = {.render = zmk_rgb_underglow_effect_ripple,
                                  .on_keypress = ripple_add_event,
                                  .reset = ripple_reset},
-
-    /* New QMK-inspired effects */
-    [UNDERGLOW_EFFECT_ALPHAS_MODS] = {.render = zmk_rgb_underglow_effect_alphas_mods,
-                                      .reset = alphas_mods_reset},
-    [UNDERGLOW_EFFECT_RAINDROPS] = {.render = zmk_rgb_underglow_effect_raindrops,
-                                    .reset = raindrops_reset},
     [UNDERGLOW_EFFECT_REACTIVE_WIDE] = {.render = zmk_rgb_underglow_effect_reactive_wide,
                                         .on_keypress = reactive_wide_add_event,
                                         .reset = reactive_wide_reset},
