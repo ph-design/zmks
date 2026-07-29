@@ -53,7 +53,8 @@ static void reactive_wide_reset(void) {
 }
 
 static void zmk_rgb_underglow_effect_reactive_wide(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
+    uint16_t base_hue = state.color.h;
+    uint8_t sat = state.color.s;
     float brt = get_brightness_factor();
 
     /* Max lifetime in frames — shorter at higher speed */
@@ -79,10 +80,9 @@ static void zmk_rgb_underglow_effect_reactive_wide(void) {
         age_factor *= age_factor;
 
         /* Hue shifts toward complementary as age increases */
-        struct color_hsl shifted = hsl;
-        shifted.h = (hsl.h + (uint16_t)((1.0f - age_factor) * 60)) % 360;
+        uint16_t hue = (base_hue + (uint16_t)((1.0f - age_factor) * 60)) % 360;
         struct color_rgb_float rgb;
-        hsl_to_rgb_float(&shifted, &rgb);
+        hsv_to_rgb_float(hue, sat, 100, &rgb);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
             /* 2D Euclidean distance using physical coordinates */

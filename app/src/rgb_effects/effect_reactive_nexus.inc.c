@@ -50,7 +50,8 @@ static void reactive_nexus_reset(void) {
 }
 
 static void zmk_rgb_underglow_effect_reactive_nexus(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
+    uint16_t base_hue = state.color.h;
+    uint8_t sat = state.color.s;
     float brt = get_brightness_factor();
 
     uint8_t max_age = (uint8_t)(100.0f / anim_speed());
@@ -72,10 +73,9 @@ static void zmk_rgb_underglow_effect_reactive_nexus(void) {
         }
         age_factor *= age_factor;
 
-        struct color_hsl shifted = hsl;
-        shifted.h = (hsl.h + (uint16_t)((1.0f - age_factor) * 40)) % 360;
+        uint16_t hue = (base_hue + (uint16_t)((1.0f - age_factor) * 40)) % 360;
         struct color_rgb_float rgb;
-        hsl_to_rgb_float(&shifted, &rgb);
+        hsv_to_rgb_float(hue, sat, 100, &rgb);
 
         /* Cross-arm reach expands as the event ages */
         float reach = (1.0f - age_factor) * 1.0f; /* max reach = full keyboard */

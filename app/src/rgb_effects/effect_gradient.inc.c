@@ -1,15 +1,14 @@
 /* LINEAR GRADIENT effect — uses physical X coordinate for position */
 static void zmk_rgb_underglow_effect_gradient(void) {
-    struct color_hsl hsl1 = hsb_to_hsl(state.color);
-    struct color_hsl hsl2 = hsl1;
-    hsl2.h = (hsl1.h + 120) % 360;
-    struct color_hsl hsl3 = hsl1;
-    hsl3.h = (hsl1.h + 240) % 360;
+    uint16_t h1 = state.color.h;
+    uint16_t h2 = (h1 + 120) % 360;
+    uint16_t h3 = (h1 + 240) % 360;
+    uint8_t sat = state.color.s;
 
     struct color_rgb_float rgb1, rgb2, rgb3;
-    hsl_to_rgb_float(&hsl1, &rgb1);
-    hsl_to_rgb_float(&hsl2, &rgb2);
-    hsl_to_rgb_float(&hsl3, &rgb3);
+    hsv_to_rgb_float(h1, sat, 100, &rgb1);
+    hsv_to_rgb_float(h2, sat, 100, &rgb2);
+    hsv_to_rgb_float(h3, sat, 100, &rgb3);
 
     float brt = get_brightness_factor();
     struct color_rgb_float colors[3] = {rgb1, rgb2, rgb3};

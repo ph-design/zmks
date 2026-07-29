@@ -11,9 +11,8 @@ static void reactive_add_event(uint32_t position) {
 }
 
 static void zmk_rgb_underglow_effect_reactive_enhanced(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float base_rgb;
-    hsl_to_rgb_float(&hsl, &base_rgb);
+    user_color_rgb_float(&base_rgb);
     float brt = get_brightness_factor();
 
     /* Decay rate scales with animation speed for responsiveness */

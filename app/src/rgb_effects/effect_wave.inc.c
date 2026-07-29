@@ -1,9 +1,8 @@
 /* WAVE effect — uses physical X coordinate for wave phase */
 static float wave_offset = 0.0f;
 static void zmk_rgb_underglow_effect_wave(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float base_rgb;
-    hsl_to_rgb_float(&hsl, &base_rgb);
+    user_color_rgb_float(&base_rgb);
     float brt = get_brightness_factor();
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {

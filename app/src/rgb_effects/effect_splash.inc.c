@@ -55,7 +55,8 @@ static void splash_reset(void) {
 }
 
 static void zmk_rgb_underglow_effect_splash(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
+    uint16_t base_hue = state.color.h;
+    uint8_t sat = state.color.s;
     float brt = get_brightness_factor();
 
     /* Max lifetime in frames.
@@ -107,11 +108,10 @@ static void zmk_rgb_underglow_effect_splash(void) {
             float ring_factor = 1.0f - diff / ring_width_norm;
 
             /* Rainbow hue based on normalised distance from origin */
-            float hue = hue_wrap((float)state.color.h + pixel_dist * 360.0f);
+            float hue = hue_wrap((float)base_hue + pixel_dist * 360.0f);
 
-            struct color_hsl pixel_hsl = {(uint16_t)hue, hsl.s, hsl.l};
             struct color_rgb_float rgb;
-            hsl_to_rgb_float(&pixel_hsl, &rgb);
+            hsv_to_rgb_float((uint16_t)hue, sat, 100, &rgb);
 
             float intensity = ring_factor * age_fade * brt;
             struct color_rgb_float c = {

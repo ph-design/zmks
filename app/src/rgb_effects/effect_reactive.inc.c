@@ -3,9 +3,8 @@
 static void reactive_reset(void) { memset(reactive_brightness, 0, sizeof(reactive_brightness)); }
 
 static void zmk_rgb_underglow_effect_reactive(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float base_color;
-    hsl_to_rgb_float(&hsl, &base_color);
+    user_color_rgb_float(&base_color);
     float brt = get_brightness_factor();
 
     /* Fade speed scales with animation_speed: higher speed = faster fade */

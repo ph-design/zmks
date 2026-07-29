@@ -10,14 +10,14 @@
  */
 
 static void zmk_rgb_underglow_effect_alphas_mods(void) {
-    struct color_hsl hsl_alpha = hsb_to_hsl(state.color);
-    struct color_hsl hsl_mod = hsl_alpha;
+    uint8_t sat = state.color.s;
     /* Secondary hue: offset by speed × 30 degrees (speed 1→30°, 5→150°) */
-    hsl_mod.h = (hsl_alpha.h + (uint16_t)anim_speed() * 30) % 360;
+    uint16_t hue_alpha = state.color.h;
+    uint16_t hue_mod = (hue_alpha + (uint16_t)anim_speed() * 30) % 360;
 
     struct color_rgb_float rgb_alpha, rgb_mod;
-    hsl_to_rgb_float(&hsl_alpha, &rgb_alpha);
-    hsl_to_rgb_float(&hsl_mod, &rgb_mod);
+    hsv_to_rgb_float(hue_alpha, sat, 100, &rgb_alpha);
+    hsv_to_rgb_float(hue_mod, sat, 100, &rgb_mod);
 
     float brt = get_brightness_factor();
     rgb_alpha.r *= brt;

@@ -60,7 +60,8 @@ static void reactive_cross_reset(void) {
 }
 
 static void zmk_rgb_underglow_effect_reactive_cross(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
+    uint16_t base_hue = state.color.h;
+    uint8_t sat = state.color.s;
     float brt = get_brightness_factor();
 
     /* Max lifetime: Speed 1 → 80 fr (1.3 s), Speed 5 → 16 fr (0.27 s) */
@@ -88,10 +89,9 @@ static void zmk_rgb_underglow_effect_reactive_cross(void) {
         fade *= fade;
 
         /* Slight hue shift as cross ages (up to 25°) */
-        uint16_t hue = (hsl.h + (uint16_t)((1.0f - fade) * 25)) % 360;
-        struct color_hsl shifted = {hue, hsl.s, hsl.l};
+        uint16_t hue = (base_hue + (uint16_t)((1.0f - fade) * 25)) % 360;
         struct color_rgb_float rgb;
-        hsl_to_rgb_float(&shifted, &rgb);
+        hsv_to_rgb_float(hue, sat, 100, &rgb);
 
         for (int j = 0; j < STRIP_NUM_PIXELS; j++) {
             float jx = led_norm_x(j);

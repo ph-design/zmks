@@ -3,9 +3,8 @@ static float knight_pos_f = 0.0f;
 static int knight_dir_f = 1;
 static uint8_t knight_frame_acc = 0;
 static void zmk_rgb_underglow_effect_knight(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float rgb;
-    hsl_to_rgb_float(&hsl, &rgb);
+    user_color_rgb_float(&rgb);
     float brt = get_brightness_factor();
 
     float len = 1.0f / 6.0f; /* segment width in normalised space */

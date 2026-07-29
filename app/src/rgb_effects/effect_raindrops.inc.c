@@ -12,8 +12,8 @@
 static uint16_t raindrops_hue[STRIP_NUM_PIXELS];
 
 static void zmk_rgb_underglow_effect_raindrops(void) {
-    struct color_hsl base = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
+    uint8_t sat = state.color.s;
 
     /* Pick 1..speed random LEDs per frame and assign random hue */
     int changes = (int)anim_speed();
@@ -24,9 +24,8 @@ static void zmk_rgb_underglow_effect_raindrops(void) {
     }
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        struct color_hsl hsl = {raindrops_hue[i], base.s, base.l};
         struct color_rgb_float rgb;
-        hsl_to_rgb_float(&hsl, &rgb);
+        hsv_to_rgb_float(raindrops_hue[i], sat, 100, &rgb);
         rgb.r *= brt;
         rgb.g *= brt;
         rgb.b *= brt;
@@ -35,8 +34,7 @@ static void zmk_rgb_underglow_effect_raindrops(void) {
 }
 
 static void raindrops_reset(void) {
-    struct color_hsl base = hsb_to_hsl(state.color);
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        raindrops_hue[i] = base.h;
+        raindrops_hue[i] = state.color.h;
     }
 }

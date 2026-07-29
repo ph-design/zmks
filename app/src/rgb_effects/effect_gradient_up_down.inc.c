@@ -17,8 +17,8 @@ static float gradient_ud_offset = 0.0f;
 static void gradient_up_down_reset(void) { gradient_ud_offset = 0.0f; }
 
 static void zmk_rgb_underglow_effect_gradient_up_down(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     float brt = get_brightness_factor();
+    uint8_t sat = state.color.s;
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         /* Use normalised Y position (0-1) for vertical gradient */
@@ -27,9 +27,8 @@ static void zmk_rgb_underglow_effect_gradient_up_down(void) {
         /* Spread 360 degrees across vertical span */
         float hue = hue_wrap((float)state.color.h + gradient_ud_offset + row_norm * 360.0f);
 
-        struct color_hsl pixel_hsl = {(uint16_t)hue, hsl.s, hsl.l};
         struct color_rgb_float rgb;
-        hsl_to_rgb_float(&pixel_hsl, &rgb);
+        hsv_to_rgb_float((uint16_t)hue, sat, 100, &rgb);
 
         fx_pixels[i] = (struct color_rgb_float){
             .r = rgb.r * brt,

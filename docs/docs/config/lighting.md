@@ -37,12 +37,24 @@ Definition file: [zmk/app/Kconfig](https://github.com/zmkfirmware/zmk/blob/main/
 
 Values for `CONFIG_ZMK_RGB_UNDERGLOW_EFF_START`:
 
-| Value | Effect      |
-| ----- | ----------- |
-| 0     | Solid color |
-| 1     | Breathe     |
-| 2     | Spectrum    |
-| 3     | Swirl       |
+| Value | Effect          |
+| ----- | --------------- |
+| 0     | Solid           |
+| 1     | Breathing       |
+| 2     | Spectrum        |
+| 3     | Rainbow         |
+| 4     | Gradient        |
+| 5     | Wave            |
+| 6     | Knight          |
+| 7     | Twinkle         |
+| 8     | Sparkle         |
+| 9     | Raindrops       |
+| 10    | Alphas Mods     |
+| 11    | Reactive        |
+| 12    | Ripple          |
+| 13    | Reactive Wide   |
+| 14    | Reactive Nexus  |
+| 15    | Typing Heatmap  |
 
 :::note
 The `*_START` settings only determine the initial underglow state. Any changes you make with the [underglow behavior](../keymaps/behaviors/underglow.md) are saved to flash after a one minute delay and will be used after that.

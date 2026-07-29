@@ -1,7 +1,8 @@
 /* SPIRAL OUT effect (center moves outward) — uses 2D physical coords */
 static float spiral_out_phase = 0.0f;
 static void zmk_rgb_underglow_effect_spiral_out(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
+    struct color_rgb_float rgb;
+    user_color_rgb_float(&rgb);
     float brt = get_brightness_factor();
 
     float cx = spiral_out_phase; /* move outward from left */
@@ -14,12 +15,11 @@ static void zmk_rgb_underglow_effect_spiral_out(void) {
         /* Inverse: farther from center = brighter */
         float v = dist * 2.0f;
         v = CLAMP(v, 0.0f, 1.0f);
-        struct color_rgb_float rgb;
-        hsl_to_rgb_float(&hsl, &rgb);
-        rgb.r *= brt * v;
-        rgb.g *= brt * v;
-        rgb.b *= brt * v;
-        fx_pixels[i] = rgb;
+        fx_pixels[i] = (struct color_rgb_float){
+            .r = rgb.r * brt * v,
+            .g = rgb.g * brt * v,
+            .b = rgb.b * brt * v,
+        };
     }
 
     spiral_out_phase += anim_speed() * 0.006f;

@@ -153,16 +153,18 @@ static void zmk_rgb_underglow_effect_digital_rain(void) {
 
             float intensity = trail_factor * brt;
 
-            struct color_hsl pixel_hsl;
+            uint16_t hue = (uint16_t)base_hue;
+            uint8_t sat, val;
             if (dist_from_head < 0.02f) {
-                pixel_hsl =
-                    (struct color_hsl){(uint16_t)base_hue, (uint16_t)(state.color.s * 0.5f), 70};
+                sat = (uint8_t)(state.color.s * 0.5f);
+                val = 100;
             } else {
-                pixel_hsl = (struct color_hsl){(uint16_t)base_hue, state.color.s, 50};
+                sat = state.color.s;
+                val = 70;
             }
 
             struct color_rgb_float rgb;
-            hsl_to_rgb_float(&pixel_hsl, &rgb);
+            hsv_to_rgb_float(hue, sat, val, &rgb);
 
             struct color_rgb_float color = {
                 .r = rgb.r * intensity,

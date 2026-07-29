@@ -3,9 +3,8 @@ static uint8_t twinkle_brightness[STRIP_NUM_PIXELS];
 static int8_t twinkle_dir[STRIP_NUM_PIXELS]; /* +1 brightening, -1 dimming, 0 idle */
 
 static void zmk_rgb_underglow_effect_twinkle(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float base_rgb;
-    hsl_to_rgb_float(&hsl, &base_rgb);
+    user_color_rgb_float(&base_rgb);
     float brt = get_brightness_factor();
 
     /* Probability of a new twinkle starting scales with speed */

@@ -339,6 +339,10 @@ config EXPERIMENTAL_RGB_LAYER
     bool "Experimental per-key per-layer RGB underglow"
     default n
 
+config ZMK_RGB_UNDERGLOW_GAMMA_CORRECTION
+    bool "Gamma-correct RGB underglow output (perceptually uniform brightness)"
+    default y
+
 endif # ZMK_RGB_UNDERGLOW
 
 menuconfig ZMK_BACKLIGHT

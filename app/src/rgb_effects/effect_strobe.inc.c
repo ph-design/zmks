@@ -1,9 +1,8 @@
 /* STROBE effect (periodic flash) */
 static int strobe_counter = 0;
 static void zmk_rgb_underglow_effect_strobe(void) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
     struct color_rgb_float rgb;
-    hsl_to_rgb_float(&hsl, &rgb);
+    user_color_rgb_float(&rgb);
     float brt = get_brightness_factor();
 
     int period = MAX(1, 10 - (int)anim_speed() * 2);

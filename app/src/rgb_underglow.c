@@ -81,79 +81,78 @@ struct color_rgb_float {
     float b;
 };
 
-struct color_hsl {
-    uint16_t h;
-    uint8_t s;
-    uint8_t l;
-};
+static void hsv_to_rgb_float(uint16_t h, uint8_t s, uint8_t v, struct color_rgb_float *rgb) {
+    float sf = (float)s / 100.0f;
+    float vf = (float)v / 100.0f;
+    float c = vf * sf;
+    float a = (float)h / 60.0f;
+    float x = c * (1.0f - fabsf(fmodf(a, 2.0f) - 1.0f));
+    float m = vf - c;
 
-static void hsl_to_rgb_float(const struct color_hsl *hsl, struct color_rgb_float *rgb) {
-    float s = (float)hsl->s / 100;
-    float l = (float)hsl->l / 100;
-    float a = (float)hsl->h / 60;
-    float chroma = s * (1 - fabsf(2 * l - 1));
-    float x = chroma * (1 - fabsf(fmodf(a, 2) - 1));
-    float m = l - chroma / 2;
-
+    float r, g, b;
     switch ((uint8_t)a % 6) {
-    case 0:
-        rgb->r = m + chroma;
-        rgb->g = m + x;
-        rgb->b = m;
-        break;
-    case 1:
-        rgb->r = m + x;
-        rgb->g = m + chroma;
-        rgb->b = m;
-        break;
-    case 2:
-        rgb->r = m;
-        rgb->g = m + chroma;
-        rgb->b = m + x;
-        break;
-    case 3:
-        rgb->r = m;
-        rgb->g = m + x;
-        rgb->b = m + chroma;
-        break;
-    case 4:
-        rgb->r = m + x;
-        rgb->g = m;
-        rgb->b = m + chroma;
-        break;
-    case 5:
-        rgb->r = m + chroma;
-        rgb->g = m;
-        rgb->b = m + x;
-        break;
+    case 0: r = c; g = x; b = 0; break;
+    case 1: r = x; g = c; b = 0; break;
+    case 2: r = 0; g = c; b = x; break;
+    case 3: r = 0; g = x; b = c; break;
+    case 4: r = x; g = 0; b = c; break;
+    default: r = c; g = 0; b = x; break;
     }
+    rgb->r = r + m;
+    rgb->g = g + m;
+    rgb->b = b + m;
 }
 
-static void rgb_float_to_led(const struct color_rgb_float *rgb, struct led_rgb *led) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_GAMMA_CORRECTION)
+static const uint8_t gamma_lut[256] = {
+      0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,
+      1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,   2,
+      3,   3,   3,   3,   3,   4,   4,   4,   4,   5,   5,   5,   5,   6,   6,   6,
+      6,   7,   7,   7,   8,   8,   8,   9,   9,   9,  10,  10,  11,  11,  11,  12,
+     12,  13,  13,  13,  14,  14,  15,  15,  16,  16,  17,  17,  18,  18,  19,  19,
+     20,  20,  21,  22,  22,  23,  23,  24,  25,  25,  26,  26,  27,  28,  28,  29,
+     30,  30,  31,  32,  33,  33,  34,  35,  35,  36,  37,  38,  39,  39,  40,  41,
+     42,  43,  43,  44,  45,  46,  47,  48,  49,  49,  50,  51,  52,  53,  54,  55,
+     56,  57,  58,  59,  60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,
+     73,  74,  75,  76,  77,  78,  79,  81,  82,  83,  84,  85,  87,  88,  89,  90,
+     91,  93,  94,  95,  97,  98,  99, 100, 102, 103, 105, 106, 107, 109, 110, 111,
+    113, 114, 116, 117, 119, 120, 121, 123, 124, 126, 127, 129, 130, 132, 133, 135,
+    137, 138, 140, 141, 143, 145, 146, 148, 149, 151, 153, 154, 156, 158, 159, 161,
+    163, 165, 166, 168, 170, 172, 173, 175, 177, 179, 181, 182, 184, 186, 188, 190,
+    192, 194, 196, 197, 199, 201, 203, 205, 207, 209, 211, 213, 215, 217, 219, 221,
+    223, 225, 227, 229, 231, 234, 236, 238, 240, 242, 244, 246, 248, 251, 253, 255,
+};
+#endif
+
+static float dither_err[STRIP_NUM_PIXELS][3];
+
+static void dither_reset(void) {
+    memset(dither_err, 0, sizeof(dither_err));
+}
+
+static inline uint8_t dither_led_channel(float v, float *err) {
+    float adjusted = v + *err;
+    if (adjusted < 0.0f)
+        adjusted = 0.0f;
+    if (adjusted > 1.0f)
+        adjusted = 1.0f;
+    uint8_t x = (uint8_t)(adjusted * 255.0f + 0.5f);
+    /* Store the signed quantisation error (in 0–1 space) for next frame */
+    *err = adjusted - (float)x / 255.0f;
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_GAMMA_CORRECTION)
+    return gamma_lut[x];
+#else
+    return x;
+#endif
+}
+
+static void rgb_float_to_led(int idx, const struct color_rgb_float *rgb, struct led_rgb *led) {
     float r = rgb->r > 1.0f ? 1.0f : (rgb->r < 0 ? 0 : rgb->r);
     float g = rgb->g > 1.0f ? 1.0f : (rgb->g < 0 ? 0 : rgb->g);
     float b = rgb->b > 1.0f ? 1.0f : (rgb->b < 0 ? 0 : rgb->b);
-    led->r = (uint8_t)(r * 255);
-    led->g = (uint8_t)(g * 255);
-    led->b = (uint8_t)(b * 255);
-}
-
-static void interpolate_hsl(const struct color_hsl *from, const struct color_hsl *to,
-                            struct color_hsl *result, float step) {
-    /* Shortest-path hue interpolation */
-    int16_t hue_diff = (int16_t)to->h - (int16_t)from->h;
-    if (hue_diff > 180)
-        hue_diff -= 360;
-    if (hue_diff < -180)
-        hue_diff += 360;
-    int16_t h = (int16_t)from->h + (int16_t)(hue_diff * step);
-    if (h < 0)
-        h += 360;
-    if (h >= 360)
-        h -= 360;
-    result->h = (uint16_t)h;
-    result->s = (uint8_t)(from->s + (int16_t)(to->s - from->s) * step);
-    result->l = (uint8_t)(from->l + (int16_t)(to->l - from->l) * step);
+    led->r = dither_led_channel(r, &dither_err[idx][0]);
+    led->g = dither_led_channel(g, &dither_err[idx][1]);
+    led->b = dither_led_channel(b, &dither_err[idx][2]);
 }
 
 static void interpolate_rgb(const struct color_rgb_float *from, const struct color_rgb_float *to,
@@ -163,76 +162,12 @@ static void interpolate_rgb(const struct color_rgb_float *from, const struct col
     result->b = from->b + (to->b - from->b) * step;
 }
 
-/* ========================================================================= */
-/*  HSB conversion (existing, for layer indicators & user color controls)    */
-/* ========================================================================= */
+// brightness scaling
 
 static struct zmk_led_hsb hsb_scale_min_max(struct zmk_led_hsb hsb) {
     hsb.b = CONFIG_ZMK_RGB_UNDERGLOW_BRT_MIN +
             (CONFIG_ZMK_RGB_UNDERGLOW_BRT_MAX - CONFIG_ZMK_RGB_UNDERGLOW_BRT_MIN) * hsb.b / BRT_MAX;
     return hsb;
-}
-
-static struct led_rgb hsb_to_rgb(struct zmk_led_hsb hsb) {
-    float r = 0, g = 0, b = 0;
-    uint8_t i = hsb.h / 60;
-    float v = hsb.b / ((float)BRT_MAX);
-    float s = hsb.s / ((float)SAT_MAX);
-    float f = hsb.h / ((float)HUE_MAX) * 6 - i;
-    float p = v * (1 - s);
-    float q = v * (1 - f * s);
-    float t = v * (1 - (1 - f) * s);
-
-    switch (i % 6) {
-    case 0:
-        r = v;
-        g = t;
-        b = p;
-        break;
-    case 1:
-        r = q;
-        g = v;
-        b = p;
-        break;
-    case 2:
-        r = p;
-        g = v;
-        b = t;
-        break;
-    case 3:
-        r = p;
-        g = q;
-        b = v;
-        break;
-    case 4:
-        r = t;
-        g = p;
-        b = v;
-        break;
-    case 5:
-        r = v;
-        g = p;
-        b = q;
-        break;
-    }
-
-    struct led_rgb rgb = {r : r * 255, g : g * 255, b : b * 255};
-    return rgb;
-}
-
-/* Convert user HSB to HSL for effects that use HSL internally */
-static struct color_hsl hsb_to_hsl(struct zmk_led_hsb hsb) {
-    struct color_hsl hsl;
-    hsl.h = hsb.h;
-    hsl.s = hsb.s;
-    /* HSB brightness -> HSL lightness: L = B * (1 - S/200) */
-    float b_f = (float)hsb.b / 100.0f;
-    float s_f = (float)hsb.s / 100.0f;
-    float l = b_f * (1.0f - s_f / 2.0f);
-    hsl.l = (uint8_t)(l * 100);
-    if (hsl.l < 1 && hsb.b > 0)
-        hsl.l = 1;
-    return hsl;
 }
 
 /* ========================================================================= */
@@ -277,6 +212,11 @@ static struct led_rgb pixels[STRIP_NUM_PIXELS];
 static struct color_rgb_float fx_pixels[STRIP_NUM_PIXELS];
 
 static struct rgb_underglow_state state;
+
+/* Convenience: convert user's current color (at full brightness) to RGB */
+static void user_color_rgb_float(struct color_rgb_float *rgb) {
+    hsv_to_rgb_float(state.color.h, state.color.s, 100, rgb);
+}
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
 static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
@@ -350,10 +290,7 @@ struct sparkle_pixel {
 static struct sparkle_pixel sparkle_data[STRIP_NUM_PIXELS];
 
 static void sparkle_generate_pixel(int idx, bool offset_counter) {
-    struct color_hsl hsl = hsb_to_hsl(state.color);
-    struct color_rgb_float rgb;
-    hsl_to_rgb_float(&hsl, &rgb);
-    sparkle_data[idx].color = rgb;
+    user_color_rgb_float(&sparkle_data[idx].color);
     sparkle_data[idx].total_frames = (3 * ANIMATION_FPS) / ((rand() % 16) + 1);
     if (sparkle_data[idx].total_frames < 2)
         sparkle_data[idx].total_frames = 2;
@@ -442,28 +379,17 @@ static inline float anim_speed(void) {
  *   - on_keypress handler (optional, for key-interactive effects)
  *   - reset function      (optional, to clear effect state)
  */
-/* ── Static ─────────────────────────────────────────── */
 #include "rgb_effects/effect_solid.inc.c"
-
-/* ── Simple animation ───────────────────────────────── */
 #include "rgb_effects/effect_breathing.inc.c"
-
-/* ── Hue-based animations ───────────────────────────── */
 #include "rgb_effects/effect_spectrum.inc.c"
 #include "rgb_effects/effect_rainbow.inc.c"
 #include "rgb_effects/effect_gradient.inc.c"
-
-/* ── Pattern / spatial animations ───────────────────── */
 #include "rgb_effects/effect_wave.inc.c"
 #include "rgb_effects/effect_knight.inc.c"
 #include "rgb_effects/effect_twinkle.inc.c"
 #include "rgb_effects/effect_sparkle.inc.c"
 #include "rgb_effects/effect_raindrops.inc.c"
-
-/* ── Hybrid / static-split ──────────────────────────── */
 #include "rgb_effects/effect_alphas_mods.inc.c"
-
-/* ── Key-interactive effects ────────────────────────── */
 #include "rgb_effects/effect_reactive_enhanced.inc.c"
 #include "rgb_effects/effect_ripple.inc.c"
 #include "rgb_effects/effect_reactive_wide.inc.c"
@@ -494,22 +420,15 @@ struct rgb_effect_desc {
 };
 
 static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
-    /* ── Static ─────────────────────────────────────────── */
     [UNDERGLOW_EFFECT_SOLID] = {.render = zmk_rgb_underglow_effect_solid},
-
-    /* ── Simple animation ───────────────────────────────── */
     [UNDERGLOW_EFFECT_BREATHING] = {.render = zmk_rgb_underglow_effect_breathing,
                                     .reset = breathing_reset},
-
-    /* ── Hue-based animations ───────────────────────────── */
     [UNDERGLOW_EFFECT_SPECTRUM] = {.render = zmk_rgb_underglow_effect_spectrum,
                                    .reset = spectrum_reset},
     [UNDERGLOW_EFFECT_RAINBOW] = {.render = zmk_rgb_underglow_effect_rainbow,
                                   .reset = rainbow_reset},
     [UNDERGLOW_EFFECT_GRADIENT] = {.render = zmk_rgb_underglow_effect_gradient,
                                    .reset = gradient_reset},
-
-    /* ── Pattern / spatial animations ───────────────────── */
     [UNDERGLOW_EFFECT_WAVE] = {.render = zmk_rgb_underglow_effect_wave, .reset = wave_reset},
     [UNDERGLOW_EFFECT_KNIGHT] = {.render = zmk_rgb_underglow_effect_knight, .reset = knight_reset},
     [UNDERGLOW_EFFECT_TWINKLE] = {.render = zmk_rgb_underglow_effect_twinkle,
@@ -518,12 +437,8 @@ static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
                                   .reset = sparkle_init_all},
     [UNDERGLOW_EFFECT_RAINDROPS] = {.render = zmk_rgb_underglow_effect_raindrops,
                                     .reset = raindrops_reset},
-
-    /* ── Hybrid / static-split ──────────────────────────── */
     [UNDERGLOW_EFFECT_ALPHAS_MODS] = {.render = zmk_rgb_underglow_effect_alphas_mods,
                                       .reset = alphas_mods_reset},
-
-    /* ── Key-interactive effects ────────────────────────── */
     [UNDERGLOW_EFFECT_REACTIVE] = {.render = zmk_rgb_underglow_effect_reactive_enhanced,
                                    .on_keypress = reactive_add_event,
                                    .reset = reactive_enhanced_reset},
@@ -550,12 +465,16 @@ static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
 /* ========================================================================= */
 
 static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
-    struct zmk_led_hsb hsb = state.color;
-    return (struct led_rgb){
-        r : (hsb.b * (r)) / 0xff,
-        g : (hsb.b * (g)) / 0xff,
-        b : (hsb.b * (b)) / 0xff
-    };
+    struct zmk_led_hsb hsb = hsb_scale_min_max(state.color);
+    uint8_t lr = (uint8_t)((hsb.b * r) / 0xff);
+    uint8_t lg = (uint8_t)((hsb.b * g) / 0xff);
+    uint8_t lb = (uint8_t)((hsb.b * b) / 0xff);
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_GAMMA_CORRECTION)
+    lr = gamma_lut[lr];
+    lg = gamma_lut[lg];
+    lb = gamma_lut[lb];
+#endif
+    return (struct led_rgb){r : lr, g : lg, b : lb};
 }
 
 static int find_led_for_key_pos(uint8_t key_pos) {
@@ -648,7 +567,7 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
 
     /* Convert float pixels to LED strip format */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        rgb_float_to_led(&fx_pixels[i], &pixels[i]);
+        rgb_float_to_led(i, &fx_pixels[i], &pixels[i]);
     }
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
@@ -913,6 +832,7 @@ int zmk_rgb_underglow_select_effect(int effect) {
 
     /* Reset all effect state and purge stale keypress events */
     k_msgq_purge(&effect_event_msgq);
+    dither_reset();
     for (int i = 0; i < UNDERGLOW_EFFECT_NUMBER; i++) {
         if (effect_table[i].reset)
             effect_table[i].reset();
