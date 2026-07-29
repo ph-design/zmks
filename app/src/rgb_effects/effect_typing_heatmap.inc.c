@@ -11,8 +11,12 @@ static uint32_t heatmap_decrease_timer;
 #define HEATMAP_DECREASE_DELAY_MS 50
 #endif
 
-#ifndef HEATMAP_SPREAD
-#define HEATMAP_SPREAD 0.28f
+#ifndef HEATMAP_SPREAD_X
+#define HEATMAP_SPREAD_X 0.28f
+#endif
+
+#ifndef HEATMAP_SPREAD_Y
+#define HEATMAP_SPREAD_Y 0.45f
 #endif
 
 #ifndef HEATMAP_AREA_LIMIT
@@ -20,28 +24,25 @@ static uint32_t heatmap_decrease_timer;
 #endif
 
 static void heatmap_add_event(uint32_t position) {
-    if (position >= STRIP_NUM_PIXELS)
+    if (position >= STRIP_NUM_PIXELS || key_to_pixel[position] == 0xFF)
         return;
-
-    uint8_t pressed_led = key_to_pixel[position];
-    int t = (int)heatmap_temp[pressed_led] + HEATMAP_INCREASE_STEP;
-    heatmap_temp[pressed_led] = (uint8_t)(t > 255 ? 255 : t);
 
     float src_x = key_src_x(position);
     float src_y = key_src_y(position);
 
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        if (i == pressed_led)
+        if ((uint32_t)effect_pixel_lookup(i) == position) {
+            int t = (int)heatmap_temp[i] + HEATMAP_INCREASE_STEP;
+            heatmap_temp[i] = (uint8_t)(t > 255 ? 255 : t);
             continue;
+        }
 
-        float dx = led_norm_x(i) - src_x;
-        float dy = led_norm_y(i) - src_y;
-        float dist = sqrtf(dx * dx + dy * dy);
+        float nx = (led_norm_x(i) - src_x) / HEATMAP_SPREAD_X;
+        float ny = (led_norm_y(i) - src_y) / HEATMAP_SPREAD_Y;
+        float nd = sqrtf(nx * nx + ny * ny);
 
-        if (dist <= HEATMAP_SPREAD) {
-            uint8_t amount = (uint8_t)((1.0f - dist / HEATMAP_SPREAD) * HEATMAP_AREA_LIMIT);
-            if (amount > HEATMAP_AREA_LIMIT)
-                amount = HEATMAP_AREA_LIMIT;
+        if (nd <= 1.0f) {
+            uint8_t amount = (uint8_t)((1.0f - nd) * HEATMAP_AREA_LIMIT);
             if (amount > 0) {
                 int v = (int)heatmap_temp[i] + amount;
                 heatmap_temp[i] = (uint8_t)(v > 255 ? 255 : v);

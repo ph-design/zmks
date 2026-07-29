@@ -265,13 +265,13 @@ static inline float led_norm_y(int i) {
 
 /* Get normalised source coordinates for a key matrix position (for keypress events) */
 static inline float key_src_x(uint32_t position) {
-    if (position < STRIP_NUM_PIXELS)
+    if (position < STRIP_NUM_PIXELS && key_to_pixel[position] != 0xFF)
         return led_norm_x(key_to_pixel[position]);
     return 0.5f;
 }
 
 static inline float key_src_y(uint32_t position) {
-    if (position < STRIP_NUM_PIXELS)
+    if (position < STRIP_NUM_PIXELS && key_to_pixel[position] != 0xFF)
         return led_norm_y(key_to_pixel[position]);
     return 0.5f;
 }
@@ -464,17 +464,24 @@ static const struct rgb_effect_desc effect_table[UNDERGLOW_EFFECT_NUMBER] = {
 /*  Layer Overlay (applied on top of every effect)                           */
 /* ========================================================================= */
 
-static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
-    struct zmk_led_hsb hsb = hsb_scale_min_max(state.color);
-    uint8_t lr = (uint8_t)((hsb.b * r) / 0xff);
-    uint8_t lg = (uint8_t)((hsb.b * g) / 0xff);
-    uint8_t lb = (uint8_t)((hsb.b * b) / 0xff);
+
+static inline uint8_t overlay_channel(uint8_t channel, float brt) {
+    float v = ((float)channel / 255.0f) * brt;
+    uint8_t x = (uint8_t)(v * 255.0f + 0.5f);
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_GAMMA_CORRECTION)
-    lr = gamma_lut[lr];
-    lg = gamma_lut[lg];
-    lb = gamma_lut[lb];
+    return gamma_lut[x];
+#else
+    return x;
 #endif
-    return (struct led_rgb){r : lr, g : lg, b : lb};
+}
+
+static struct led_rgb hex_to_rgb_overlay(uint8_t r, uint8_t g, uint8_t b) {
+    float brt = get_brightness_factor();
+    return (struct led_rgb){
+        r : overlay_channel(r, brt),
+        g : overlay_channel(g, brt),
+        b : overlay_channel(b, brt)
+    };
 }
 
 static int find_led_for_key_pos(uint8_t key_pos) {
@@ -674,7 +681,7 @@ static int zmk_rgb_underglow_init(void) {
     }
 #endif
 
-    /* Build inverse pixel lookup table: key position → LED strip index */
+    memset(key_to_pixel, 0xFF, sizeof(key_to_pixel));
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         int key_pos = effect_pixel_lookup(i);
         if (key_pos >= 0 && key_pos < STRIP_NUM_PIXELS) {
