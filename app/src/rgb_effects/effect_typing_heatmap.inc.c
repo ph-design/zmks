@@ -60,8 +60,7 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
     float brt = get_brightness_factor();
 
     uint32_t now = (uint32_t)k_uptime_get();
-    int delay_ms =
-        (int)(HEATMAP_DECREASE_DELAY_MS / anim_speed());
+    int delay_ms = (int)(HEATMAP_DECREASE_DELAY_MS / anim_speed());
     if (delay_ms < 5)
         delay_ms = 5;
 
@@ -80,31 +79,25 @@ static void zmk_rgb_underglow_effect_typing_heatmap(void) {
             continue;
         }
 
-        /* Smooth heatmap gradient: blue → cyan → green → yellow → red
-         * 5 stops evenly spaced across val 1-255 for perceptually balanced transitions. */
         float t = (float)val / 255.0f;
         float r, g, b;
-        if (t < 0.25f) {
-            /* blue → cyan */
-            float s = t / 0.25f;
+        if (t < 0.35f) {
+            float s = t / 0.35f; // blue → cyan
             r = 0.0f;
             g = s;
             b = 1.0f;
         } else if (t < 0.5f) {
-            /* cyan → green */
-            float s = (t - 0.25f) / 0.25f;
+            float s = (t - 0.35f) / 0.15f; // cyan → green
             r = 0.0f;
             g = 1.0f;
             b = 1.0f - s;
-        } else if (t < 0.75f) {
-            /* green → yellow */
-            float s = (t - 0.5f) / 0.25f;
+        } else if (t < 0.65f) {
+            float s = (t - 0.5f) / 0.15f; // green → yellow
             r = s;
             g = 1.0f;
             b = 0.0f;
         } else {
-            /* yellow → red */
-            float s = (t - 0.75f) / 0.25f;
+            float s = (t - 0.65f) / 0.35f; // yellow → red
             r = 1.0f;
             g = 1.0f - s;
             b = 0.0f;
