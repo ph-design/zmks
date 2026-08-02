@@ -9,6 +9,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/sensor/lis2dh.h>
 
 #define START_TRIG_INT1			0
 #define START_TRIG_INT2			1
@@ -188,6 +189,9 @@ static int lis2dh_trigger_anym_tap_set(const struct device *dev,
 	} else if (trig->type == SENSOR_TRIG_TAP) {
 		lis2dh->handler_tap = handler;
 		lis2dh->trig_tap = trig;
+	} else if (trig->type == SENSOR_TRIG_DOUBLE_TAP) {
+		lis2dh->handler_dtap = handler;
+		lis2dh->trig_dtap = trig;
 	}
 
 	if ((handler == NULL) || (status < 0)) {
@@ -220,6 +224,13 @@ static int lis2dh_trigger_tap_set(const struct device *dev,
 	return lis2dh_trigger_anym_tap_set(dev, handler, trig);
 }
 
+static int lis2dh_trigger_dtap_set(const struct device *dev,
+				   sensor_trigger_handler_t handler,
+				   const struct sensor_trigger *trig)
+{
+	return lis2dh_trigger_anym_tap_set(dev, handler, trig);
+}
+
 static int lis2dh_start_trigger_int2(const struct device *dev)
 {
 	struct lis2dh_data *lis2dh = dev->data;
@@ -230,6 +241,7 @@ static int lis2dh_start_trigger_int2(const struct device *dev)
 	setup_int2(dev, true);
 
 	bool has_anyt = (lis2dh->handler_tap != NULL);
+	bool has_dtap = (lis2dh->handler_dtap != NULL);
 	bool has_anym = (lis2dh->handler_anymotion != NULL);
 
 	/* configure any motion interrupt */
@@ -253,8 +265,10 @@ static int lis2dh_start_trigger_int2(const struct device *dev)
 
 	/* configure tap interrupt on all axes */
 	reg  = LIS2DH_REG_CFG_CLICK;
-	mask = LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS;
-	val  = has_anyt ? mask : 0;
+	mask = LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS |
+	       LIS2DH_EN_CLICK_XD | LIS2DH_EN_CLICK_YD | LIS2DH_EN_CLICK_ZD;
+	val  = (has_anyt ? (LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS) : 0) |
+	       (has_dtap ? (LIS2DH_EN_CLICK_XD | LIS2DH_EN_CLICK_YD | LIS2DH_EN_CLICK_ZD) : 0);
 	status = lis2dh->hw_tf->update_reg(dev, reg, mask, val);
 	if (status < 0) {
 		LOG_ERR("Failed to configure tap interrupt");
@@ -264,7 +278,7 @@ static int lis2dh_start_trigger_int2(const struct device *dev)
 	/* set click detection on int line */
 	reg  = cfg->hw.anym_on_int1 ? LIS2DH_REG_CTRL3 : LIS2DH_REG_CTRL6;
 	mask = cfg->hw.anym_on_int1 ? LIS2DH_EN_CLICK_INT1 : LIS2DH_EN_CLICK_INT2;
-	val  = has_anyt ? mask : 0;
+	val  = (has_anyt || has_dtap) ? mask : 0;
 	status = lis2dh->hw_tf->update_reg(dev, reg, mask, val);
 	if (status < 0) {
 		LOG_ERR("Failed to enable click detection on int line");
@@ -284,9 +298,55 @@ int lis2dh_trigger_set(const struct device *dev,
 		return lis2dh_trigger_anym_set(dev, handler, trig);
 	} else if (trig->type == SENSOR_TRIG_TAP) {
 		return lis2dh_trigger_tap_set(dev, handler, trig);
+	} else if (trig->type == SENSOR_TRIG_DOUBLE_TAP) {
+		return lis2dh_trigger_dtap_set(dev, handler, trig);
 	}
 
 	return -ENOTSUP;
+}
+
+/* ODR in Hz, derived from CTRL1; index 9 in low-power mode is 5376 Hz */
+static int lis2dh_current_odr_hz(const struct device *dev)
+{
+	static const uint16_t odr_hz[] = {0, 1, 10, 25, 50, 100, 200, 400, 1620, 1344, 5376};
+	struct lis2dh_data *lis2dh = dev->data;
+	uint8_t ctrl1;
+	int status = lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL1, &ctrl1);
+
+	if (status < 0) {
+		return status;
+	}
+
+	uint8_t idx = (ctrl1 & LIS2DH_ODR_MASK) >> LIS2DH_ODR_SHIFT;
+
+	if (idx == LIS2DH_ODR_9 && (ctrl1 & LIS2DH_LP_EN_BIT_MASK)) {
+		idx++;
+	}
+
+	return odr_hz[idx];
+}
+
+/* click timing registers are 1 LSb = 1/ODR, 8 bits wide */
+static int lis2dh_click_time_set(const struct device *dev, uint8_t reg, int32_t ms)
+{
+	int odr = lis2dh_current_odr_hz(dev);
+	uint32_t count;
+
+	if (odr <= 0) {
+		return odr < 0 ? odr : -EINVAL;
+	}
+	if (ms < 0) {
+		return -EINVAL;
+	}
+
+	count = (uint32_t)ms * (uint32_t)odr / 1000;
+	if (count > 0xFF) {
+		return -EINVAL;
+	}
+
+	struct lis2dh_data *lis2dh = dev->data;
+
+	return lis2dh->hw_tf->write_reg(dev, reg, (uint8_t)count);
 }
 
 int lis2dh_acc_slope_config(const struct device *dev,
@@ -335,7 +395,7 @@ int lis2dh_acc_slope_config(const struct device *dev,
 		status = lis2dh->hw_tf->write_reg(dev,
 						  LIS2DH_REG_CFG_CLICK_THS,
 						  LIS2DH_CLICK_LIR | reg_val);
-	} else { /* SENSOR_ATTR_SLOPE_DUR */
+	} else if (attr == SENSOR_ATTR_SLOPE_DUR) {
 		/*
 		 * slope duration is measured in number of samples:
 		 * N/ODR where N is the register value
@@ -357,6 +417,12 @@ int lis2dh_acc_slope_config(const struct device *dev,
 		status = lis2dh->hw_tf->write_reg(dev,
 						  LIS2DH_REG_TIME_LIMIT,
 						  val->val1);
+	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS) {
+		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_LATENCY, val->val1);
+	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS) {
+		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_WINDOW, val->val1);
+	} else {
+		status = -ENOTSUP;
 	}
 
 	return status;
@@ -485,10 +551,17 @@ static void lis2dh_thread_cb(const struct device *dev)
 			LOG_DBG("@tick=%u click_src=0x%x", k_cycle_get_32(), reg_val);
 		}
 
+		if (likely(lis2dh->handler_dtap != NULL) &&
+				(reg_val & LIS2DH_CLICK_SRC_DCLICK)) {
+			lis2dh->handler_dtap(dev, lis2dh->trig_dtap);
+
+			LOG_DBG("@tick=%u dclick_src=0x%x", k_cycle_get_32(), reg_val);
+		}
+
 		/* Reactivate level triggered interrupt if handler did not
 		 * disable itself
 		 */
-		if (lis2dh->handler_anymotion || lis2dh->handler_tap) {
+		if (lis2dh->handler_anymotion || lis2dh->handler_tap || lis2dh->handler_dtap) {
 			setup_int2(dev, true);
 		}
 
@@ -526,7 +599,6 @@ int lis2dh_init_interrupt(const struct device *dev)
 	struct lis2dh_data *lis2dh = dev->data;
 	const struct lis2dh_config *cfg = dev->config;
 	int status;
-	uint8_t raw[2];
 
 	lis2dh->dev = dev;
 

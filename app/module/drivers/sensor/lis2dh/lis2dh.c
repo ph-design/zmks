@@ -90,6 +90,22 @@ static int lis2dh_sample_fetch_temp(const struct device *dev)
 	return ret;
 }
 
+static int32_t lis2dh_orient_from_zone(uint8_t src)
+{
+	/* INT1/2_SRC zone bits share the INT_CFG bit positions (Table 56) */
+	if (src & LIS2DH_INT_CFG_ZHIE_ZUPE) {
+		return LIS2DH_ORIENT_FLAT_UP;
+	}
+	if (src & LIS2DH_INT_CFG_ZLIE_ZDOWNE) {
+		return LIS2DH_ORIENT_FLAT_DOWN;
+	}
+	if (src & (LIS2DH_INT_CFG_XHIE_XUPE | LIS2DH_INT_CFG_XLIE_XDOWNE |
+		   LIS2DH_INT_CFG_YHIE_YUPE | LIS2DH_INT_CFG_YLIE_YDOWNE)) {
+		return LIS2DH_ORIENT_TILTED;
+	}
+	return LIS2DH_ORIENT_UNKNOWN;
+}
+
 static int lis2dh_channel_get(const struct device *dev,
 			      enum sensor_channel chan,
 			      struct sensor_value *val)
@@ -113,6 +129,10 @@ static int lis2dh_channel_get(const struct device *dev,
 		ofs_start = 0;
 		ofs_end = 2;
 		break;
+	case SENSOR_CHAN_LIS2DH_ORIENTATION:
+		val->val1 = lis2dh_orient_from_zone(lis2dh->orientation);
+		val->val2 = 0;
+		return 0;
 #ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
 	case SENSOR_CHAN_DIE_TEMP:
 		memcpy(val, &lis2dh->temperature, sizeof(*val));
@@ -177,6 +197,14 @@ static int lis2dh_sample_fetch(const struct device *dev,
 		status = lis2dh_fetch_xyz(dev, chan);
 	} else if (chan == SENSOR_CHAN_DIE_TEMP) {
 		status = lis2dh_sample_fetch_temp(dev);
+	} else if ((int)chan == SENSOR_CHAN_LIS2DH_ORIENTATION) {
+		struct lis2dh_data *lis2dh = dev->data;
+		const struct lis2dh_config *cfg = dev->config;
+		uint8_t reg = cfg->hw.anym_on_int1 ?
+				LIS2DH_REG_INT1_SRC : LIS2DH_REG_INT2_SRC;
+
+		/* zone bits are only live while an interrupt generator is configured */
+		status = lis2dh->hw_tf->read_reg(dev, reg, &lis2dh->orientation);
 	} else {
 		__ASSERT(false, "Invalid sensor channel in fetch");
 	}
@@ -302,7 +330,7 @@ static int lis2dh_acc_config(const struct device *dev,
 			     enum sensor_attribute attr,
 			     const struct sensor_value *val)
 {
-	switch (attr) {
+	switch ((int)attr) {
 #ifdef CONFIG_LIS2DH_ACCEL_RANGE_RUNTIME
 	case SENSOR_ATTR_FULL_SCALE:
 		return lis2dh_acc_range_set(dev, sensor_ms2_to_g(val));
@@ -314,6 +342,8 @@ static int lis2dh_acc_config(const struct device *dev,
 #if defined(CONFIG_LIS2DH_TRIGGER)
 	case SENSOR_ATTR_SLOPE_TH:
 	case SENSOR_ATTR_SLOPE_DUR:
+	case SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS:
+	case SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS:
 		return lis2dh_acc_slope_config(dev, attr, val);
 #endif
 #ifdef CONFIG_LIS2DH_ACCEL_HP_FILTERS

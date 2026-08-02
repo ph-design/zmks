@@ -183,13 +183,15 @@
 #define LIS2DH_EN_CLICK_XS		BIT(0)
 
 #define LIS2DH_REG_CLICK_SRC		0x39
-#define LIS2DH_CLICK_SRC_DCLICK		BIT(5)
-#define LIS2DH_CLICK_SRC_SCLICK		BIT(4)
+#define LIS2DH_CLICK_SRC_DCLICK		BIT(6)
+#define LIS2DH_CLICK_SRC_SCLICK		BIT(5)
 
 #define LIS2DH_REG_CFG_CLICK_THS	0x3A
 #define LIS2DH_CLICK_LIR		BIT(7)
 
 #define LIS2DH_REG_TIME_LIMIT		0x3B
+#define LIS2DH_REG_TIME_LATENCY		0x3C
+#define LIS2DH_REG_TIME_WINDOW		0x3D
 
 /* sample buffer size includes status register */
 #define LIS2DH_BUF_SZ			7
@@ -265,6 +267,9 @@ struct lis2dh_data {
 	struct sensor_value temperature;
 #endif
 
+	/* raw INTx_SRC zone bits from the last orientation fetch */
+	uint8_t orientation;
+
 	uint8_t reg_ctrl1_active_val;
 
 #ifdef CONFIG_LIS2DH_TRIGGER
@@ -278,6 +283,8 @@ struct lis2dh_data {
 	const struct sensor_trigger *trig_anymotion;
 	sensor_trigger_handler_t handler_tap;
 	const struct sensor_trigger *trig_tap;
+	sensor_trigger_handler_t handler_dtap;
+	const struct sensor_trigger *trig_dtap;
 	atomic_t trig_flags;
 	enum sensor_channel chan_drdy;
 
