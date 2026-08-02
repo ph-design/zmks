@@ -418,6 +418,17 @@ config ZMK_IDLE_SKIP_ON_USB_POWER
     bool "Skip idle state when USB cable is plugged in (VBUS powered)"
     depends on USB_DEVICE_STACK
 
+config ZMK_UNRESPONSE_FIX
+    bool "Hardware watchdog that auto-resets the MCU if the firmware hangs or crashes"
+    depends on DT_HAS_NORDIC_NRF_WDT_ENABLED
+    select WATCHDOG
+    help
+      Starts the nRF hardware watchdog with a 3s timeout, fed every 1s from
+      a system workqueue item. If the firmware hard-faults or wedges, the MCU
+      resets itself instead of staying dead until the next power cycle.
+      The watchdog stops in System OFF (deep sleep / soft off), so it does
+      not affect sleep current. Adds ~3uA while active.
+
 config ZMK_SLEEP
     bool "Enable deep sleep support"
     depends on HAS_POWEROFF
