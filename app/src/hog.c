@@ -18,6 +18,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/endpoints_types.h>
 #include <zmk/hog.h>
 #include <zmk/hid.h>
+#include <zmk/watchdog.h>
 #if IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
 #include <zmk/pointing/resolution_multipliers.h>
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING_SMOOTH_SCROLLING)
@@ -327,6 +328,9 @@ void send_keyboard_report_callback(struct k_work *work) {
             bt_conn_set_security(conn, BT_SECURITY_L2);
         } else if (err) {
             LOG_DBG("Error notifying %d", err);
+            zmk_wdt_note_tx_fail();
+        } else {
+            zmk_wdt_note_tx_ok();
         }
 
         bt_conn_unref(conn);
@@ -379,6 +383,9 @@ void send_consumer_report_callback(struct k_work *work) {
             bt_conn_set_security(conn, BT_SECURITY_L2);
         } else if (err) {
             LOG_DBG("Error notifying %d", err);
+            zmk_wdt_note_tx_fail();
+        } else {
+            zmk_wdt_note_tx_ok();
         }
 
         bt_conn_unref(conn);
@@ -432,6 +439,9 @@ void send_mouse_report_callback(struct k_work *work) {
             bt_conn_set_security(conn, BT_SECURITY_L2);
         } else if (err) {
             LOG_DBG("Error notifying %d", err);
+            zmk_wdt_note_tx_fail();
+        } else {
+            zmk_wdt_note_tx_ok();
         }
 
         bt_conn_unref(conn);

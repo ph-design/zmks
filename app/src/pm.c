@@ -16,6 +16,7 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/endpoints.h>
+#include <zmk/watchdog.h>
 
 // Reimplement some of the device work from Zephyr PM to work with the new `sys_poweroff` API.
 // TODO: Tweak this to smarter runtime PM of subsystems on sleep.
@@ -88,6 +89,10 @@ const struct device *soft_off_wakeup_sources[] = {
 #endif
 
 int zmk_pm_soft_off(void) {
+    // The WDT keeps its remaining timeout frozen across System OFF on nRF52 and
+    // resumes counting during boot after wake, so reload it before going off.
+    zmk_wdt_feed_now();
+
 #if IS_ENABLED(CONFIG_PM_DEVICE)
     size_t device_count;
     const struct device *devs;
