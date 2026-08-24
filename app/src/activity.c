@@ -106,6 +106,14 @@ void activity_work_handler(struct k_work *work) {
 
 K_WORK_DEFINE(activity_work, activity_work_handler);
 
+void zmk_activity_force_sleep(void) {
+#if IS_ENABLED(CONFIG_ZMK_SLEEP)
+    // backdate the idle clock so the work pass takes the normal sleep path
+    activity_last_uptime = k_uptime_get() - MAX_SLEEP_MS - MSEC_PER_SEC;
+    k_work_submit(&activity_work);
+#endif
+}
+
 void activity_expiry_function(struct k_timer *_timer) { k_work_submit(&activity_work); }
 
 K_TIMER_DEFINE(activity_timer, activity_expiry_function, NULL);
