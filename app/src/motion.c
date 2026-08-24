@@ -233,6 +233,34 @@ static void carry_trigger_handler(const struct device *dev, const struct sensor_
     }
 }
 
+/**
+ * @brief Clear all latched interrupts on the LIS2DE12.
+ *
+ * The LIS2DE12 click/orientation/delta interrupts are latched in the status
+ * registers and keep INT1/INT2 asserted until the corresponding register is
+ * read. If the line is still asserted when sys_poweroff() runs, the nRF
+ * DETECT signal remains active and System OFF is aborted, leaving the
+ * keyboard stuck in the "about to sleep" state with its devices suspended.
+ *
+ * Reading the channel via the sensor API fetches the underlying register and
+ * clears the latched condition.
+ */
+static void clear_imu_latched_interrupts(void) {
+    struct sensor_value dummy;
+
+    /* Click source (click single/double) */
+    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DE12_CLICK_SRC);
+    (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_CLICK_SRC, &dummy);
+
+    /* Orientation source */
+    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION);
+    (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION, &dummy);
+
+    /* Accelerometer sample fetch also services the delta/data-ready path */
+    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_ACCEL_XYZ);
+    (void)sensor_channel_get(imu, SENSOR_CHAN_ACCEL_XYZ, &dummy);
+}
+
 static void carry_check_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
     int64_t now = k_uptime_get();
@@ -255,9 +283,21 @@ static void carry_check_work_cb(struct k_work *work) {
             raise_zmk_motion_live_state_changed(
                 (struct zmk_motion_live_state_changed){.state = live});
             /* stay asleep in a bag: motion jolts must not wake the
-             * keyboard again and again */
+             * keyboard again and again.
+             *
+             * Clear all latched IMU interrupts and fully disarm the PM
+             * wake-up source before forcing sleep. Without this, INT2
+             * stays asserted (latched) and sys_poweroff() aborts, so
+             * the keyboard loops forever in "about to sleep". */
+            clear_imu_latched_interrupts();
             imu_wake_disabled = true;
+            (void)pm_device_wakeup_enable(imu, false);
+            if (imu_int2.port != NULL) {
+                gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_DISABLE);
+            }
+            LOG_INF("Carry mode active: IMU wake-up disarmed, forcing sleep");
             zmk_activity_force_sleep();
+            return;
         }
     }
 
@@ -279,7 +319,17 @@ static void settle_check_work_cb(struct k_work *work) {
     bool still_in_motion = streak_start != 0 && (now - last_motion <= CARRY_STEP_GAP_MS);
 
     if (still_in_motion && carry_cfg.enabled) {
+        /* Keyboard has been in motion since boot and never settled: it is
+         * being carried. Clear latched interrupts, fully disarm the IMU
+         * wake-up source, then force sleep so we do not loop on a
+         * continuously asserted INT2 line. */
+        LOG_INF("Settle check: keyboard in motion since boot, disarming IMU wake-up");
+        clear_imu_latched_interrupts();
         imu_wake_disabled = true;
+        (void)pm_device_wakeup_enable(imu, false);
+        if (imu_int2.port != NULL) {
+            gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_DISABLE);
+        }
         zmk_activity_force_sleep();
     }
 }
@@ -287,6 +337,25 @@ static void settle_check_work_cb(struct k_work *work) {
 // Arm the INT2 pin as a System OFF wake source and keep the sensor running;
 // the wake-up event is the jolt of the keyboard being set down.
 static void prepare_imu_wakeup(void) {
+    if (imu_wake_disabled) {
+        /* Disarm the INT2 wake source. While being carried the line is
+         * asserted (latched) almost continuously; a pending SENSE would
+         * abort sys_poweroff() and leave the keyboard stuck "about to
+         * sleep" with its devices suspended.
+         *
+         * Fix: also explicitly disable the PM device wake-up so the PM
+         * subsystem no longer treats the IMU as a wake source, and clear
+         * every latched interrupt so INT2 is guaranteed to start low. */
+        clear_imu_latched_interrupts();
+        (void)pm_device_wakeup_enable(imu, false);
+        if (imu_int2.port != NULL) {
+            gpio_pin_configure_dt(&imu_int2, GPIO_INPUT);
+            gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_DISABLE);
+        }
+        return;
+    }
+
+    /* Normal wake-up arming path. */
     if (pm_device_wakeup_enable(imu, true) < 0) {
         // Not a recognized wake-up source: keep the device busy so the
         // suspend pass leaves it running and INT2 can still wake the system.
@@ -295,21 +364,9 @@ static void prepare_imu_wakeup(void) {
     }
 
     // clear any latched interrupt so INT2 starts low
-    struct sensor_value dummy;
-    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION);
-    (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION, &dummy);
+    clear_imu_latched_interrupts();
 
     if (imu_int2.port == NULL) {
-        return;
-    }
-
-    if (imu_wake_disabled) {
-        // Disarm the INT2 wake source. While being carried the line is
-        // asserted (latched) almost continuously; a pending SENSE would
-        // abort sys_poweroff() and leave the keyboard stuck "about to
-        // sleep" with its devices suspended.
-        gpio_pin_configure_dt(&imu_int2, GPIO_INPUT);
-        gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_DISABLE);
         return;
     }
 
@@ -336,7 +393,19 @@ static int carry_key_veto_listener(const zmk_event_t *eh) {
     settle_armed = false;
     /* a key press means the keyboard is in use again: re-arm the IMU
      * wake-up for the next sleep */
-    imu_wake_disabled = false;
+    if (imu_wake_disabled) {
+        LOG_DBG("Key press: re-arming IMU wake-up");
+        imu_wake_disabled = false;
+        int rc = pm_device_wakeup_enable(imu, true);
+        if (rc < 0) {
+            LOG_WRN("Failed to re-enable IMU wake-up (%d)", rc);
+        }
+        clear_imu_latched_interrupts();
+        if (imu_int2.port != NULL) {
+            gpio_pin_configure_dt(&imu_int2, GPIO_INPUT);
+            gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_LEVEL_HIGH);
+        }
+    }
     if (live.carry_active) {
         live.carry_active = false;
         raise_zmk_motion_live_state_changed((struct zmk_motion_live_state_changed){.state = live});
@@ -457,6 +526,10 @@ static int apply_carry_hw(void) {
         k_work_cancel_delayable(&settle_work);
         settle_armed = false;
         imu_wake_disabled = false;
+        /* Re-arm the IMU wake-up since carry mode is now off and the
+         * keyboard is presumed in active use. */
+        (void)pm_device_wakeup_enable(imu, true);
+        clear_imu_latched_interrupts();
     }
     return 0;
 }
