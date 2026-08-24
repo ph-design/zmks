@@ -294,7 +294,17 @@ static void prepare_imu_wakeup(void) {
     (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION);
     (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION, &dummy);
 
-    if (imu_wake_disabled || imu_int2.port == NULL) {
+    if (imu_int2.port == NULL) {
+        return;
+    }
+
+    if (imu_wake_disabled) {
+        // Disarm the INT2 wake source. While being carried the line is
+        // asserted (latched) almost continuously; a pending SENSE would
+        // abort sys_poweroff() and leave the keyboard stuck "about to
+        // sleep" with its devices suspended.
+        gpio_pin_configure_dt(&imu_int2, GPIO_INPUT);
+        gpio_pin_interrupt_configure_dt(&imu_int2, GPIO_INT_DISABLE);
         return;
     }
 

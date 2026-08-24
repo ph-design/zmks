@@ -91,6 +91,16 @@ void activity_work_handler(struct k_work *work) {
         zmk_wdt_feed_now();
 
         sys_poweroff();
+
+        /* Poweroff was aborted, e.g. a wake source was already asserted.
+         * Bring devices back up and reset the idle clock, otherwise the
+         * keyboard gets stuck between active and sleep: state is SLEEP,
+         * devices are suspended, and every timer pass would retry (and
+         * abort) forever.
+         */
+        zmk_pm_resume_devices();
+        activity_last_uptime = k_uptime_get();
+        set_state(ZMK_ACTIVITY_ACTIVE);
     } else
 #endif /* IS_ENABLED(CONFIG_ZMK_SLEEP) */
         if (inactive_time > MAX_IDLE_MS) {
