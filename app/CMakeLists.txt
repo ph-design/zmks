@@ -34,6 +34,7 @@ target_sources_ifdef(CONFIG_ZMK_WPM app PRIVATE src/wpm.c)
 target_sources(app PRIVATE src/event_manager.c)
 target_sources_ifdef(CONFIG_ZMK_PM app PRIVATE src/pm.c)
 target_sources_ifdef(CONFIG_ZMK_UNRESPONSE_FIX app PRIVATE src/watchdog.c)
+target_sources_ifdef(CONFIG_ZMK_MOTION app PRIVATE src/motion.c src/events/motion_live_state_changed.c)
 target_sources_ifdef(CONFIG_ZMK_EXT_POWER app PRIVATE src/ext_power_generic.c)
 target_sources_ifdef(CONFIG_ZMK_GPIO_KEY_WAKEUP_TRIGGER app PRIVATE src/gpio_key_wakeup_trigger.c)
 target_sources(app PRIVATE src/events/activity_state_changed.c)
@@ -141,6 +142,7 @@ if (CONFIG_ZMK_STUDIO_RPC)
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/keymap.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/lighting.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/combos.proto
+                        ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/motion.proto
   )
 
   target_include_directories(app PUBLIC ${CMAKE_CURRENT_BINARY_DIR})

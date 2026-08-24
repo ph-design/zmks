@@ -583,6 +583,8 @@ ZMK_RPC_SUBSYSTEM_HANDLER(keymap, remove_layer, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(keymap, restore_layer, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(keymap, set_layer_props, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
-static int event_mapper(const zmk_event_t *eh, zmk_studio_Notification *n) { return 0; }
+// keymap has no event notifications of its own; never consume other
+// subsystems' events (returning 0 here would swallow every mapper after it)
+static int event_mapper(const zmk_event_t *eh, zmk_studio_Notification *n) { return -ENOTSUP; }
 
 ZMK_RPC_EVENT_MAPPER(keymap, event_mapper);
