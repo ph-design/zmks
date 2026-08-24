@@ -5,7 +5,7 @@ if SENSOR
 
 rsource "battery/Kconfig"
 rsource "ec11/Kconfig"
-rsource "lis2dh/Kconfig"
+rsource "lis2de12/Kconfig"
 rsource "max17048/Kconfig"
 
 rsource "encoder_mock/Kconfig"

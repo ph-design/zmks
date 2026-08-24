@@ -463,8 +463,8 @@ menuconfig ZMK_MOTION
     bool "Motion (IMU) features: case tap actions and carry sleep"
     depends on SENSOR
     depends on SETTINGS
-    depends on DT_HAS_ST_LIS2DH_ENABLED
-    depends on LIS2DH_TRIGGER
+    depends on DT_HAS_ST_LIS2DE12_ENABLED
+    depends on LIS2DE12_TRIGGER
     select ZMK_BEHAVIOR_LOCAL_IDS
     select ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS
 

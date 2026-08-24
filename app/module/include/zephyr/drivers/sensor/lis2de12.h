@@ -1,0 +1,50 @@
+/*
+ * Copyright The Zephyr Project Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#ifndef ZEPHYR_INCLUDE_DRIVERS_SENSOR_LIS2DE12_H_
+#define ZEPHYR_INCLUDE_DRIVERS_SENSOR_LIS2DE12_H_
+
+#include <zephyr/drivers/sensor.h>
+
+enum lis2de12_self_test {
+    LIS2DE12_SELF_TEST_DISABLE = 0,
+    LIS2DE12_SELF_TEST_POSITIVE = 1,
+    LIS2DE12_SELF_TEST_NEGATIVE = 2,
+};
+
+enum sensor_attribute_lis2de12 {
+    SENSOR_ATTR_LIS2DE12_SELF_TEST = SENSOR_ATTR_PRIV_START,
+    /* click threshold in raw counts (CLICK_THS) */
+    SENSOR_ATTR_LIS2DE12_CLICK_THS,
+    /* click max duration, dead time and double-click window, in milliseconds */
+    SENSOR_ATTR_LIS2DE12_CLICK_TIME_LIMIT_MS,
+    SENSOR_ATTR_LIS2DE12_CLICK_LATENCY_MS,
+    SENSOR_ATTR_LIS2DE12_CLICK_WINDOW_MS,
+};
+
+enum sensor_channel_lis2de12 {
+    SENSOR_CHAN_LIS2DE12_ORIENTATION = SENSOR_CHAN_PRIV_START,
+    /* raw CLICK_SRC byte latched at the last click interrupt */
+    SENSOR_CHAN_LIS2DE12_CLICK_SRC,
+};
+
+/* CLICK_SRC bit layout (datasheet Table 73) */
+#define LIS2DE12_CLICK_SRC_IA     BIT(7)
+#define LIS2DE12_CLICK_SRC_DCLICK BIT(6)
+#define LIS2DE12_CLICK_SRC_SCLICK BIT(5)
+#define LIS2DE12_CLICK_SRC_SIGN   BIT(4)
+#define LIS2DE12_CLICK_SRC_Z      BIT(2)
+#define LIS2DE12_CLICK_SRC_Y      BIT(1)
+#define LIS2DE12_CLICK_SRC_X      BIT(0)
+
+enum lis2de12_orientation {
+    LIS2DE12_ORIENT_UNKNOWN = 0,
+    LIS2DE12_ORIENT_FLAT_UP = 1,
+    LIS2DE12_ORIENT_FLAT_DOWN = 2,
+    LIS2DE12_ORIENT_TILTED = 3,
+};
+
+#endif /* ZEPHYR_INCLUDE_DRIVERS_SENSOR_LIS2DE12_H_ */

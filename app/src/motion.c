@@ -8,7 +8,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
-#include <zephyr/drivers/sensor/lis2dh.h>
+#include <zephyr/drivers/sensor/lis2de12.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -154,7 +154,7 @@ static void fire_binding(struct zmk_behavior_binding *b, enum tap_side side) {
 }
 
 static enum tap_side click_side(uint8_t src) {
-    bool neg = (src & LIS2DH_CLICK_SRC_SIGN) != 0;
+    bool neg = (src & LIS2DE12_CLICK_SRC_SIGN) != 0;
 #if IS_ENABLED(CONFIG_ZMK_MOTION_TAP_SIDE_INVERT)
     neg = !neg;
 #endif
@@ -164,7 +164,7 @@ static enum tap_side click_side(uint8_t src) {
 static void read_click_src(void) {
     struct sensor_value v;
 
-    if (sensor_channel_get(imu, SENSOR_CHAN_LIS2DH_CLICK_SRC, &v) == 0) {
+    if (sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_CLICK_SRC, &v) == 0) {
         live.last_click_src = (uint8_t)v.val1;
     }
 }
@@ -273,8 +273,8 @@ static void prepare_imu_wakeup(void) {
 
     // clear any latched interrupt so INT2 starts low
     struct sensor_value dummy;
-    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DH_ORIENTATION);
-    (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DH_ORIENTATION, &dummy);
+    (void)sensor_sample_fetch_chan(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION);
+    (void)sensor_channel_get(imu, SENSOR_CHAN_LIS2DE12_ORIENTATION, &dummy);
 
     if (imu_wake_disabled || imu_int2.port == NULL) {
         return;
@@ -354,25 +354,25 @@ static int apply_tap_hw(void) {
 
     v.val1 = tap_cfg.threshold;
     v.val2 = 0;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_THS, &v);
+    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DE12_CLICK_THS, &v);
     if (rc < 0) {
         return rc;
     }
 
     v.val1 = tap_cfg.time_limit_ms;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_TIME_LIMIT_MS, &v);
+    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DE12_CLICK_TIME_LIMIT_MS, &v);
     if (rc < 0) {
         return rc;
     }
 
     v.val1 = tap_cfg.latency_ms;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS, &v);
+    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DE12_CLICK_LATENCY_MS, &v);
     if (rc < 0) {
         return rc;
     }
 
     v.val1 = tap_cfg.window_ms;
-    return sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS, &v);
+    return sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DE12_CLICK_WINDOW_MS, &v);
 }
 
 static void apply_tap_triggers(void) {
