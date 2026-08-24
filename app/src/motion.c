@@ -53,8 +53,11 @@ enum motion_orientation {
     ORIENT_TILTED = 3,
 };
 
-// pose from the gravity vector: Z-dominant means flat; a weak Z is free fall
-// or no gravity sample yet
+// Pose from the gravity vector: Z-dominant means flat, a weak Z is free
+// fall or no gravity sample yet. The LIS2DE12 is mounted with its +Z axis
+// facing down, so at rest the chip reads gravity along +Z: a negative Z
+// sample means the keys face up (flat up), a positive one means the
+// keyboard is upside down (flat down).
 static int orientation_from_ums2(int64_t x, int64_t y, int64_t z) {
     int64_t ax = x < 0 ? -x : x;
     int64_t ay = y < 0 ? -y : y;
@@ -64,7 +67,7 @@ static int orientation_from_ums2(int64_t x, int64_t y, int64_t z) {
         return ORIENT_UNKNOWN;
     }
     if (az > ax && az > ay) {
-        return z > 0 ? ORIENT_FLAT_UP : ORIENT_FLAT_DOWN;
+        return z > 0 ? ORIENT_FLAT_DOWN : ORIENT_FLAT_UP;
     }
     return ORIENT_TILTED;
 }
@@ -92,8 +95,9 @@ static const struct device *imu = IMU_DEV;
 static int64_t streak_start;
 static int64_t last_motion;
 
-// set when the settle check put us back to sleep: skip re-arming the IMU
-// wake-up, otherwise a keyboard jostled in a bag would wake in a loop
+// set when the settle check or carry detection put the keyboard back to
+// sleep: skip re-arming the IMU wake-up, otherwise a keyboard jostled in a
+// bag would wake in a loop
 static bool imu_wake_disabled;
 static bool settle_armed;
 
@@ -233,12 +237,26 @@ static void carry_check_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
     int64_t now = k_uptime_get();
 
+    /* settings may disable carry while a check is already in flight */
+    if (!carry_cfg.enabled) {
+        return;
+    }
+
     if (now - last_motion > CARRY_STEP_GAP_MS) {
         streak_start = 0;
-        live.carry_active = false;
+        if (live.carry_active) {
+            live.carry_active = false;
+            raise_zmk_motion_live_state_changed(
+                (struct zmk_motion_live_state_changed){.state = live});
+        }
     } else if (streak_start != 0 && now - streak_start >= carry_cfg.motion_duration_ms) {
         if (!live.carry_active) {
             live.carry_active = true;
+            raise_zmk_motion_live_state_changed(
+                (struct zmk_motion_live_state_changed){.state = live});
+            /* stay asleep in a bag: motion jolts must not wake the
+             * keyboard again and again */
+            imu_wake_disabled = true;
             zmk_activity_force_sleep();
         }
     }
@@ -302,6 +320,9 @@ static int carry_key_veto_listener(const zmk_event_t *eh) {
     streak_start = 0;
     live.carry_active = false;
     settle_armed = false;
+    /* a key press means the keyboard is in use again: re-arm the IMU
+     * wake-up for the next sleep */
+    imu_wake_disabled = false;
     return 0;
 }
 
@@ -417,6 +438,7 @@ static int apply_carry_hw(void) {
         k_work_cancel_delayable(&carry_work);
         k_work_cancel_delayable(&settle_work);
         settle_armed = false;
+        imu_wake_disabled = false;
     }
     return 0;
 }
