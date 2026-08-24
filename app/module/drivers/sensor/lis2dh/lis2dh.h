@@ -288,6 +288,9 @@ struct lis2dh_data {
 	atomic_t trig_flags;
 	enum sensor_channel chan_drdy;
 
+	/* CLICK_SRC latched at interrupt time; the register self-clears on read */
+	uint8_t click_src;
+
 #if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
 	K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_LIS2DH_THREAD_STACK_SIZE);
 	struct k_thread thread;

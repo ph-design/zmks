@@ -253,6 +253,17 @@ static int lis2dh_start_trigger_int2(const struct device *dev)
 		return status;
 	}
 
+	/* latch the interrupt so INTx_SRC holds zone bits until read */
+	if (cfg->hw.anym_latch) {
+		mask = cfg->hw.anym_on_int1 ? LIS2DH_EN_LIR_INT1 : LIS2DH_EN_LIR_INT2;
+		status = lis2dh->hw_tf->update_reg(dev, LIS2DH_REG_CTRL5,
+						   mask, mask);
+		if (status < 0) {
+			LOG_ERR("Failed to latch any motion interrupt");
+			return status;
+		}
+	}
+
 	/* enable any motion detection on int line */
 	reg  = cfg->hw.anym_on_int1 ? LIS2DH_REG_CTRL3 : LIS2DH_REG_CTRL6;
 	mask = cfg->hw.anym_on_int1 ? LIS2DH_EN_IA_INT1 : LIS2DH_EN_IA_INT2;
@@ -326,8 +337,9 @@ static int lis2dh_current_odr_hz(const struct device *dev)
 	return odr_hz[idx];
 }
 
-/* click timing registers are 1 LSb = 1/ODR, 8 bits wide */
-static int lis2dh_click_time_set(const struct device *dev, uint8_t reg, int32_t ms)
+/* click timing registers are 1 LSb = 1/ODR; TIME_LIMIT is 7-bit, the rest 8-bit */
+static int lis2dh_click_time_set(const struct device *dev, uint8_t reg, int32_t ms,
+				 uint8_t max_count)
 {
 	int odr = lis2dh_current_odr_hz(dev);
 	uint32_t count;
@@ -340,7 +352,7 @@ static int lis2dh_click_time_set(const struct device *dev, uint8_t reg, int32_t 
 	}
 
 	count = (uint32_t)ms * (uint32_t)odr / 1000;
-	if (count > 0xFF) {
+	if (count > max_count) {
 		return -EINVAL;
 	}
 
@@ -390,11 +402,6 @@ int lis2dh_acc_slope_config(const struct device *dev,
 							LIS2DH_REG_INT1_THS :
 							LIS2DH_REG_INT2_THS,
 						  reg_val);
-
-		/* Configure threshold for the Click recognition */
-		status = lis2dh->hw_tf->write_reg(dev,
-						  LIS2DH_REG_CFG_CLICK_THS,
-						  LIS2DH_CLICK_LIR | reg_val);
 	} else if (attr == SENSOR_ATTR_SLOPE_DUR) {
 		/*
 		 * slope duration is measured in number of samples:
@@ -412,15 +419,18 @@ int lis2dh_acc_slope_config(const struct device *dev,
 							LIS2DH_REG_INT1_DUR :
 							LIS2DH_REG_INT2_DUR,
 						  val->val1);
-
-		/* Configure time limit for the Click recognition */
-		status = lis2dh->hw_tf->write_reg(dev,
-						  LIS2DH_REG_TIME_LIMIT,
-						  val->val1);
+	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_THS) {
+		if (val->val1 < 1 || val->val1 > 127) {
+			return -EINVAL;
+		}
+		status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CFG_CLICK_THS,
+						  LIS2DH_CLICK_LIR | val->val1);
+	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_TIME_LIMIT_MS) {
+		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_LIMIT, val->val1, 127);
 	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS) {
-		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_LATENCY, val->val1);
+		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_LATENCY, val->val1, 255);
 	} else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS) {
-		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_WINDOW, val->val1);
+		status = lis2dh_click_time_set(dev, LIS2DH_REG_TIME_WINDOW, val->val1, 255);
 	} else {
 		status = -ENOTSUP;
 	}
@@ -532,8 +542,6 @@ static void lis2dh_thread_cb(const struct device *dev)
 		if (likely(lis2dh->handler_anymotion != NULL) &&
 				(reg_val >> LIS2DH_INT_CFG_MODE_SHIFT)) {
 			lis2dh->handler_anymotion(dev, lis2dh->trig_anymotion);
-
-			LOG_DBG("@tick=%u int2_src=0x%x", k_cycle_get_32(), reg_val);
 		}
 
 		/* read click interrupt */
@@ -544,18 +552,18 @@ static void lis2dh_thread_cb(const struct device *dev)
 			return;
 		}
 
+		if ((reg_val & (LIS2DH_CLICK_SRC_SCLICK | LIS2DH_CLICK_SRC_DCLICK)) != 0) {
+			lis2dh->click_src = reg_val;
+		}
+
 		if (likely(lis2dh->handler_tap != NULL) &&
 				(reg_val & LIS2DH_CLICK_SRC_SCLICK)) {
 			lis2dh->handler_tap(dev, lis2dh->trig_tap);
-
-			LOG_DBG("@tick=%u click_src=0x%x", k_cycle_get_32(), reg_val);
 		}
 
 		if (likely(lis2dh->handler_dtap != NULL) &&
 				(reg_val & LIS2DH_CLICK_SRC_DCLICK)) {
 			lis2dh->handler_dtap(dev, lis2dh->trig_dtap);
-
-			LOG_DBG("@tick=%u dclick_src=0x%x", k_cycle_get_32(), reg_val);
 		}
 
 		/* Reactivate level triggered interrupt if handler did not
@@ -609,7 +617,7 @@ int lis2dh_init_interrupt(const struct device *dev)
 			lis2dh_thread, lis2dh, NULL, NULL,
 			K_PRIO_COOP(CONFIG_LIS2DH_THREAD_PRIORITY), 0, K_NO_WAIT);
 #elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
-	lis2dh->work.handler = lis2dh_work_cb;
+	k_work_init(&lis2dh->work, lis2dh_work_cb);
 #endif
 
 	/*
