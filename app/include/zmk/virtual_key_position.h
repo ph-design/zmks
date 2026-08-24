@@ -30,3 +30,10 @@
 #define ZMK_VIRTUAL_KEY_POSITION_BEHAVIOR_INPUT_PROCESSOR(listener_index, processor_index)         \
     (ZMK_VIRTUAL_KEY_POSITION_COMBO(ZMK_COMBOS_LEN) +                                              \
      (ZMK_INPUT_LISTENERS_LEN * (processor_index)) + (listener_index))
+
+/* processor positions grow with LISTENERS_LEN per processor index; motion sits
+ * past all of them, assuming at most this many processors per listener */
+#define ZMK_MOTION_VKP_MAX_PROCESSORS_PER_LISTENER 16
+#define ZMK_VIRTUAL_KEY_POSITION_MOTION(slot)                                                      \
+    (ZMK_VIRTUAL_KEY_POSITION_COMBO(ZMK_COMBOS_LEN) +                                              \
+     (ZMK_INPUT_LISTENERS_LEN * ZMK_MOTION_VKP_MAX_PROCESSORS_PER_LISTENER) + (slot))
