@@ -349,7 +349,7 @@ static int lis2de12_click_time_set(const struct device *dev, uint8_t reg, int32_
 				 uint8_t max_count)
 {
 	int odr = lis2de12_current_odr_hz(dev);
-	uint32_t count;
+	uint64_t count;
 
 	if (odr <= 0) {
 		return odr < 0 ? odr : -EINVAL;
@@ -358,7 +358,15 @@ static int lis2de12_click_time_set(const struct device *dev, uint8_t reg, int32_
 		return -EINVAL;
 	}
 
-	count = (uint32_t)ms * (uint32_t)odr / 1000;
+	/*
+	 * 1 LSb = 1/ODR. Round to the nearest sample and keep at least one:
+	 * a zero time limit disables click detection entirely, and truncation
+	 * would do exactly that at low data rates.
+	 */
+	count = ((uint64_t)ms * (uint32_t)odr + 500) / 1000;
+	if (count == 0) {
+		count = 1;
+	}
 	if (count > max_count) {
 		return -EINVAL;
 	}
@@ -379,6 +387,7 @@ int lis2de12_acc_slope_config(const struct device *dev,
 	if (attr == SENSOR_ATTR_SLOPE_TH) {
 		uint8_t range_g, reg_val;
 		uint32_t slope_th_ums2;
+		uint32_t th_lsb_ums2;
 
 		status = lis2de12->hw_tf->read_reg(dev, LIS2DE12_REG_CTRL4,
 						 &reg_val);
@@ -392,16 +401,22 @@ int lis2de12_acc_slope_config(const struct device *dev,
 
 		slope_th_ums2 = val->val1 * 1000000 + val->val2;
 
-		/* make sure the provided threshold does not exceed range */
-		if ((slope_th_ums2 - 1) > (range_g * SENSOR_G)) {
+		/*
+		 * THS is a 7-bit register spanning the full scale, so one LSB is
+		 * range / 128 (16 mg at the +/-2g boot range). The input value is
+		 * in um/s^2 and must fit into the register span; zero would make
+		 * every sample exceed the threshold.
+		 */
+		th_lsb_ums2 = (uint32_t)(range_g * SENSOR_G * 1000000.0f / 128.0f);
+
+		if (slope_th_ums2 == 0 || slope_th_ums2 > th_lsb_ums2 * 127) {
 			return -EINVAL;
 		}
 
-		/* 7 bit full range value */
-		reg_val = 128 / range_g * (slope_th_ums2 - 1) / SENSOR_G;
+		reg_val = (uint8_t)(slope_th_ums2 / th_lsb_ums2);
 
 		LOG_INF("int2_ths=0x%x range_g=%d ums2=%u", reg_val,
-			    range_g, slope_th_ums2 - 1);
+			    range_g, slope_th_ums2);
 
 		/* Configure threshold for the any motion recognition */
 		status = lis2de12->hw_tf->write_reg(dev,

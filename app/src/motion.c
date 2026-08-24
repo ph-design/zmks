@@ -287,7 +287,12 @@ static void settle_check_work_cb(struct k_work *work) {
 // Arm the INT2 pin as a System OFF wake source and keep the sensor running;
 // the wake-up event is the jolt of the keyboard being set down.
 static void prepare_imu_wakeup(void) {
-    pm_device_wakeup_enable(imu, true);
+    if (pm_device_wakeup_enable(imu, true) < 0) {
+        // Not a recognized wake-up source: keep the device busy so the
+        // suspend pass leaves it running and INT2 can still wake the system.
+        LOG_WRN("IMU wakeup enable failed, marking device busy");
+        pm_device_busy_set(imu);
+    }
 
     // clear any latched interrupt so INT2 starts low
     struct sensor_value dummy;
@@ -328,11 +333,14 @@ ZMK_SUBSCRIPTION(zmk_motion_activity, zmk_activity_state_changed);
 static int carry_key_veto_listener(const zmk_event_t *eh) {
     ARG_UNUSED(eh);
     streak_start = 0;
-    live.carry_active = false;
     settle_armed = false;
     /* a key press means the keyboard is in use again: re-arm the IMU
      * wake-up for the next sleep */
     imu_wake_disabled = false;
+    if (live.carry_active) {
+        live.carry_active = false;
+        raise_zmk_motion_live_state_changed((struct zmk_motion_live_state_changed){.state = live});
+    }
     return 0;
 }
 
@@ -442,7 +450,7 @@ static int apply_carry_hw(void) {
         // with still-wake on, watch the post-boot settle window
         if (still_wake_cfg.enabled) {
             settle_armed = true;
-            k_work_schedule(&settle_work, K_MSEC(still_wake_cfg.settle_duration_ms));
+            k_work_reschedule(&settle_work, K_MSEC(still_wake_cfg.settle_duration_ms));
         }
     } else {
         k_work_cancel_delayable(&carry_work);
@@ -501,7 +509,7 @@ int zmk_motion_set_still_wake_config(const struct zmk_motion_still_wake_config *
 
     if (cfg->enabled && carry_cfg.enabled) {
         settle_armed = true;
-        k_work_schedule(&settle_work, K_MSEC(cfg->settle_duration_ms));
+        k_work_reschedule(&settle_work, K_MSEC(cfg->settle_duration_ms));
     } else {
         k_work_cancel_delayable(&settle_work);
         settle_armed = false;
@@ -685,9 +693,15 @@ static int motion_settings_commit(void) {
         return 0; // zmk_motion_init applies once the device comes up
     }
 
-    apply_tap_hw();
+    int rc = apply_tap_hw();
+    if (rc < 0) {
+        LOG_WRN("failed to apply tap hw config (%d)", rc);
+    }
     apply_tap_triggers();
-    apply_carry_hw();
+    rc = apply_carry_hw();
+    if (rc < 0) {
+        LOG_WRN("failed to apply carry hw config (%d)", rc);
+    }
     return 0;
 }
 
@@ -702,9 +716,15 @@ static int zmk_motion_init(void) {
 
     // runs before settings_load (SYS_INIT < main); values loaded from settings
     // are applied again by the commit handler
-    apply_tap_hw();
+    int rc = apply_tap_hw();
+    if (rc < 0) {
+        LOG_WRN("failed to apply tap hw config (%d)", rc);
+    }
     apply_tap_triggers();
-    apply_carry_hw();
+    rc = apply_carry_hw();
+    if (rc < 0) {
+        LOG_WRN("failed to apply carry hw config (%d)", rc);
+    }
 
     return 0;
 }
