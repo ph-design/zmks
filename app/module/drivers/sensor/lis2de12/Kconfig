@@ -84,9 +84,8 @@ choice LIS2DE12_ODR
 	help
 	  Initial data rate frequency of acceleration data at initialization.
 	  Supported values:
-	  1Hz, 10Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz in all power modes
-	  1620Hz, 5376Hz in low power mode only
-	  1344Hz in normal power mode
+	  1Hz, 10Hz, 25Hz, 50Hz, 100Hz, 200Hz, 400Hz in low-power mode
+	  1620Hz, 5376Hz in low-power mode only
 
 config LIS2DE12_ODR_RUNTIME
 	bool "Set at runtime"
@@ -113,7 +112,7 @@ config LIS2DE12_ODR_7
 	bool "400Hz"
 
 config LIS2DE12_ODR_8
-	bool "1.6KHz"
+	bool "1.620KHz"
 	depends on LIS2DE12_OPER_MODE_LOW_POWER
 
 config LIS2DE12_ODR_9_LOW

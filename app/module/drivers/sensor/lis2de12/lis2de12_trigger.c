@@ -316,10 +316,12 @@ int lis2de12_trigger_set(const struct device *dev,
 	return -ENOTSUP;
 }
 
-/* ODR in Hz, derived from CTRL1; index 9 in low-power mode is 5376 Hz */
+/* ODR in Hz, derived from CTRL1; ODR indices 8/9 select 1.620 kHz and
+ * 5.376 kHz in low-power mode, both select 1.344 kHz in normal mode.
+ */
 static int lis2de12_current_odr_hz(const struct device *dev)
 {
-	static const uint16_t odr_hz[] = {0, 1, 10, 25, 50, 100, 200, 400, 1620, 1344, 5376};
+	static const uint16_t odr_hz[] = {0, 1, 10, 25, 50, 100, 200, 400, 1620, 5376};
 	struct lis2de12_data *lis2de12 = dev->data;
 	uint8_t ctrl1;
 	int status = lis2de12->hw_tf->read_reg(dev, LIS2DE12_REG_CTRL1, &ctrl1);
@@ -330,8 +332,13 @@ static int lis2de12_current_odr_hz(const struct device *dev)
 
 	uint8_t idx = (ctrl1 & LIS2DE12_ODR_MASK) >> LIS2DE12_ODR_SHIFT;
 
-	if (idx == LIS2DE12_ODR_9 && (ctrl1 & LIS2DE12_LP_EN_BIT_MASK)) {
-		idx++;
+	if (idx >= ARRAY_SIZE(odr_hz)) {
+		return -EINVAL;
+	}
+
+	if ((ctrl1 & LIS2DE12_LP_EN_BIT_MASK) == 0U &&
+	    (idx == LIS2DE12_ODR_8 || idx == LIS2DE12_ODR_9)) {
+		return 1344;
 	}
 
 	return odr_hz[idx];

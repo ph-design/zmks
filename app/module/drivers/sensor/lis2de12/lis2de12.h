@@ -231,7 +231,6 @@ struct lis2de12_config {
 	const uint8_t int2_mode;
 #endif /* CONFIG_LIS2DE12_TRIGGER */
 	struct {
-		bool is_lsm303agr_dev : 1;
 		bool disc_pull_up : 1;
 		bool anym_on_int1 : 1;
 		bool anym_latch : 1;

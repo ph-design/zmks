@@ -16,29 +16,30 @@
 LOG_MODULE_REGISTER(lis2de12, CONFIG_SENSOR_LOG_LEVEL);
 #include "lis2de12.h"
 
-#define ACCEL_SCALE(sensitivity) ((SENSOR_G * (sensitivity) >> 14) / 100)
-
 /*
- * Use values for low-power mode in DS "Mechanical (Sensor) characteristics",
- * multiplied by 100.
+ * LIS2DE12 sensitivity in micro-g per LSB of the 8-bit left-justified
+ * output (datasheet Table 4: 15.6 mg, 31.2 mg, 62.5 mg, 187.5 mg per LSB
+ * for the +/-2g, +/-4g, +/-8g and +/-16g full-scale ranges).
  */
-static uint32_t lis2de12_reg_val_to_scale[] = {
-    ACCEL_SCALE(1600),
-    ACCEL_SCALE(3200),
-    ACCEL_SCALE(6400),
-    ACCEL_SCALE(19200),
+#define ACCEL_SCALE(ug_lsb) ((SENSOR_G * (ug_lsb)) / 1000000)
+
+static const uint32_t lis2de12_reg_val_to_scale[] = {
+    ACCEL_SCALE(15600),
+    ACCEL_SCALE(31200),
+    ACCEL_SCALE(62500),
+    ACCEL_SCALE(187500),
 };
 
 static void lis2de12_convert(int16_t raw_val, uint32_t scale, struct sensor_value *val) {
     int32_t converted_val;
 
     /*
-     * maximum converted value we can get is: max(raw_val) * max(scale)
-     *	max(raw_val >> 4) = +/- 2^11
-     *	max(scale) = 114921
-     *	max(converted_val) = 235358208 which is less than 2^31
+     * Output registers hold 8-bit left-justified data (datasheet Section 5.1):
+     *	max(raw_val >> 8) = +/- 2^7
+     *	max(scale) = 1838746
+     *	max(converted_val) = 235359488 which is less than 2^31
      */
-    converted_val = (raw_val >> 4) * scale;
+    converted_val = (raw_val >> 8) * scale;
     val->val1 = converted_val / 1000000;
     val->val2 = converted_val % 1000000;
 }
@@ -210,8 +211,8 @@ static int lis2de12_sample_fetch(const struct device *dev, enum sensor_channel c
 }
 
 #ifdef CONFIG_LIS2DE12_ODR_RUNTIME
-/* 1620 & 5376 are low power only */
-static const uint16_t lis2de12_odr_map[] = {0, 1, 10, 25, 50, 100, 200, 400, 1620, 1344, 5376};
+/* 1.620 kHz and 5.376 kHz are low-power mode only */
+static const uint16_t lis2de12_odr_map[] = {0, 1, 10, 25, 50, 100, 200, 400, 1620, 5376};
 
 static int lis2de12_freq_to_odr_val(uint16_t freq) {
     size_t i;
@@ -226,29 +227,35 @@ static int lis2de12_freq_to_odr_val(uint16_t freq) {
 }
 
 static int lis2de12_acc_odr_set(const struct device *dev, uint16_t freq) {
-    int odr;
-    int status;
-    uint8_t value;
     struct lis2de12_data *data = dev->data;
-
-    odr = lis2de12_freq_to_odr_val(freq);
-    if (odr < 0) {
-        return odr;
-    }
+    uint8_t value;
+    int status;
+    int odr;
+    bool lp_en;
 
     status = data->hw_tf->read_reg(dev, LIS2DE12_REG_CTRL1, &value);
     if (status < 0) {
         return status;
     }
+    lp_en = (value & LIS2DE12_LP_EN_BIT_MASK) != 0U;
 
-    /* some odr values cannot be set in certain power modes */
-    if ((value & LIS2DE12_LP_EN_BIT_MASK) == 0U && odr == LIS2DE12_ODR_8) {
-        return -ENOTSUP;
-    }
-
-    /* adjust odr index for LP enabled mode, see table above */
-    if (((value & LIS2DE12_LP_EN_BIT_MASK) == LIS2DE12_LP_EN_BIT_MASK) && (odr == LIS2DE12_ODR_9 + 1)) {
-        odr--;
+    if (freq == 1344) {
+        /* 1.344 kHz exists in normal mode only, where ODR bits 1000 and
+         * 1001 both select it (datasheet Table 20).
+         */
+        if (lp_en) {
+            return -ENOTSUP;
+        }
+        odr = LIS2DE12_ODR_9;
+    } else {
+        odr = lis2de12_freq_to_odr_val(freq);
+        if (odr < 0) {
+            return odr;
+        }
+        /* 1.620 kHz and 5.376 kHz cannot be set in normal mode */
+        if (!lp_en && (odr == LIS2DE12_ODR_8 || odr == LIS2DE12_ODR_9)) {
+            return -ENOTSUP;
+        }
     }
 
     return data->hw_tf->write_reg(dev, LIS2DE12_REG_CTRL1,
@@ -394,14 +401,6 @@ int lis2de12_init_chip(const struct device *dev) {
         return -EINVAL;
     }
 
-    /* Fix LSM303AGR_ACCEL device scale values */
-    if (cfg->hw.is_lsm303agr_dev) {
-        lis2de12_reg_val_to_scale[0] = ACCEL_SCALE(1563);
-        lis2de12_reg_val_to_scale[1] = ACCEL_SCALE(3126);
-        lis2de12_reg_val_to_scale[2] = ACCEL_SCALE(6252);
-        lis2de12_reg_val_to_scale[3] = ACCEL_SCALE(18758);
-    }
-
     if (cfg->hw.disc_pull_up) {
         status = lis2de12->hw_tf->update_reg(dev, LIS2DE12_REG_CTRL0, LIS2DE12_SDO_PU_DISC_MASK,
                                            LIS2DE12_SDO_PU_DISC_MASK);
@@ -542,8 +541,6 @@ static int lis2de12_init(const struct device *dev) {
                                  &lis2de12_data_##inst, &lis2de12_config_##inst, POST_KERNEL,          \
                                  CONFIG_SENSOR_INIT_PRIORITY, &lis2de12_driver_api);
 
-#define IS_LSM303AGR_DEV(inst) DT_NODE_HAS_COMPAT(DT_DRV_INST(inst), st_lsm303agr_accel)
-
 #define DISC_PULL_UP(inst) DT_INST_PROP(inst, disconnect_sdo_sa0_pull_up)
 
 #define ANYM_ON_INT1(inst) DT_INST_PROP(inst, anym_on_int1)
@@ -601,7 +598,6 @@ static int lis2de12_init(const struct device *dev) {
                      0)},                                                                          \
      .hw =                                                                                         \
          {                                                                                         \
-             .is_lsm303agr_dev = IS_LSM303AGR_DEV(inst),                                           \
              .disc_pull_up = DISC_PULL_UP(inst),                                                   \
              .anym_on_int1 = ANYM_ON_INT1(inst),                                                   \
              .anym_latch = ANYM_LATCH(inst),                                                       \
@@ -626,7 +622,6 @@ static int lis2de12_init(const struct device *dev) {
          },                                                                                        \
      .hw =                                                                                         \
          {                                                                                         \
-             .is_lsm303agr_dev = IS_LSM303AGR_DEV(inst),                                           \
              .disc_pull_up = DISC_PULL_UP(inst),                                                   \
              .anym_on_int1 = ANYM_ON_INT1(inst),                                                   \
              .anym_latch = ANYM_LATCH(inst),                                                       \
