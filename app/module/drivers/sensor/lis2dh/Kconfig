@@ -1,17 +1,17 @@
-# LIS2DH_PH Three Axis Accelerometer configuration options
+# LIS2DH Three Axis Accelerometer configuration options
 
 # Copyright (c) 2017 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 menuconfig LIS2DH_PH
-	bool "LIS2DH_PH Three Axis Accelerometer"
+	bool "LIS2DH Three Axis Accelerometer"
 	default y
 	depends on DT_HAS_ST_LIS2DH_ENABLED
 	select I2C if $(dt_compat_on_bus,$(DT_COMPAT_ST_LIS2DH),i2c)
 	select SPI if $(dt_compat_on_bus,$(DT_COMPAT_ST_LIS2DH),spi)
 	help
-	  Enable SPI/I2C-based driver for LIS2DH_PH, LIS3DH, LSM303DLHC,
-	  LIS2DH_PH12, LSM303AGR triaxial accelerometer sensors.
+	  Enable SPI/I2C-based driver for LIS2DH, LIS3DH, LSM303DLHC,
+	  LIS2DH12, LSM303AGR triaxial accelerometer sensors.
 
 if LIS2DH_PH
 
