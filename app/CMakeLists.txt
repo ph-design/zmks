@@ -5,6 +5,10 @@ set(CONFIG_APPLICATION_DEFINED_SYSCALL true)
 set(ZEPHYR_BOARD_ALIASES "boards/aliases.cmake")
 set(ZEPHYR_EXTRA_MODULES "${ZMK_EXTRA_MODULES};${CMAKE_CURRENT_SOURCE_DIR}/module;${CMAKE_CURRENT_SOURCE_DIR}/keymap-module")
 
+# Make the ZMK module include dirs take priority over Zephyr's bundled ones so
+# the enhanced lis2dh driver API (module/include) wins over Zephyr's stock one.
+list(APPEND EXTRA_ZEPHYR_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/module/include)
+
 # Find Zephyr. This also loads Zephyr's build system.
 find_package(Zephyr REQUIRED HINTS ../zephyr)
 project(zmk)
