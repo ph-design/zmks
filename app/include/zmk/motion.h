@@ -21,6 +21,7 @@ struct zmk_motion_tap_config {
     struct zmk_behavior_binding right_single;
     struct zmk_behavior_binding right_double;
     uint32_t layer_mask;
+    uint32_t click_axes;
 };
 
 struct zmk_motion_carry_config {
@@ -34,6 +35,12 @@ struct zmk_motion_still_wake_config {
     uint32_t settle_duration_ms;
 };
 
+struct zmk_motion_sleep_wake_config {
+    bool enabled;
+    uint32_t threshold;
+    uint32_t duration_ms;
+};
+
 struct zmk_motion_live_state {
     uint32_t magnitude;
     int32_t orientation;
@@ -42,6 +49,8 @@ struct zmk_motion_live_state {
     uint8_t last_click_src;
 };
 
+int zmk_motion_get_sleep_wake_config(struct zmk_motion_sleep_wake_config *out);
+int zmk_motion_set_sleep_wake_config(const struct zmk_motion_sleep_wake_config *cfg);
 bool zmk_motion_available(void);
 const char *zmk_motion_sensor_name(void);
 

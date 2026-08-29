@@ -38,7 +38,7 @@ static void binding_to_proto(const struct zmk_behavior_binding *b,
 
 static bool binding_from_proto(const zmk_keymap_BehaviorBinding *in,
                                struct zmk_behavior_binding *out) {
-    if (in->behavior_id < 0) {
+    if (in->behavior_id <= 0) {
         *out = (struct zmk_behavior_binding){0};
         return true;
     }
@@ -64,6 +64,7 @@ static void tap_to_proto(const struct zmk_motion_tap_config *cfg, zmk_motion_Tap
     out->latency_ms = cfg->latency_ms;
     out->window_ms = cfg->window_ms;
     out->layer_mask = cfg->layer_mask;
+    out->click_axes = cfg->click_axes;
     out->has_left_single_binding = cfg->left_single.behavior_dev != NULL;
     out->has_left_double_binding = cfg->left_double.behavior_dev != NULL;
     out->has_right_single_binding = cfg->right_single.behavior_dev != NULL;
@@ -81,6 +82,7 @@ static bool tap_from_proto(const zmk_motion_TapConfig *in, struct zmk_motion_tap
     out->latency_ms = in->latency_ms;
     out->window_ms = in->window_ms;
     out->layer_mask = in->layer_mask;
+    out->click_axes = in->click_axes;
 
     bool ok = true;
     ok &= binding_from_proto(&in->left_single_binding, &out->left_single);
@@ -99,6 +101,7 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
     resp.supports_double_tap = ready;
     resp.supports_carry = ready;
     resp.supports_still_wake = ready;
+    resp.supports_sleep_wake = ready;
     resp.threshold_max = 127;
 
     return MOTION_RESPONSE(capabilities, resp);
@@ -115,9 +118,10 @@ zmk_studio_Response get_tap_config(const zmk_studio_Request *req) {
 }
 
 zmk_studio_Response set_tap_config(const zmk_studio_Request *req) {
-    struct zmk_motion_tap_config cfg;
+    struct zmk_motion_tap_config cfg = {0};
 
     if (!tap_from_proto(&req->subsystem.motion.request_type.set_tap_config, &cfg)) {
+        LOG_WRN("tap config decode rejected");
         return MOTION_RESPONSE(set_tap_config, false);
     }
 
@@ -168,6 +172,28 @@ zmk_studio_Response set_still_wake_config(const zmk_studio_Request *req) {
     return MOTION_RESPONSE(set_still_wake_config, zmk_motion_set_still_wake_config(&cfg) == 0);
 }
 
+zmk_studio_Response get_sleep_wake_config(const zmk_studio_Request *req) {
+    struct zmk_motion_sleep_wake_config cfg;
+    zmk_motion_SleepWakeConfig resp = zmk_motion_SleepWakeConfig_init_zero;
+
+    zmk_motion_get_sleep_wake_config(&cfg);
+    resp.enabled = cfg.enabled;
+    resp.threshold = cfg.threshold;
+    resp.duration_ms = cfg.duration_ms;
+
+    return MOTION_RESPONSE(sleep_wake_config, resp);
+}
+
+zmk_studio_Response set_sleep_wake_config(const zmk_studio_Request *req) {
+    struct zmk_motion_sleep_wake_config cfg = {
+        .enabled = req->subsystem.motion.request_type.set_sleep_wake_config.enabled,
+        .threshold = req->subsystem.motion.request_type.set_sleep_wake_config.threshold,
+        .duration_ms = req->subsystem.motion.request_type.set_sleep_wake_config.duration_ms,
+    };
+
+    return MOTION_RESPONSE(set_sleep_wake_config, zmk_motion_set_sleep_wake_config(&cfg) == 0);
+}
+
 zmk_studio_Response save_state(const zmk_studio_Request *req) {
     return MOTION_RESPONSE(save_state, zmk_motion_save_state() == 0);
 }
@@ -186,6 +212,8 @@ ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_carry_config, ZMK_STUDIO_RPC_HANDLER_SECUR
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_carry_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_still_wake_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_still_wake_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_sleep_wake_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_sleep_wake_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, save_state, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_live_stream, ZMK_STUDIO_RPC_HANDLER_SECURED);
 

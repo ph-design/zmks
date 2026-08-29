@@ -330,6 +330,8 @@ static int lis2dh_acc_config(const struct device *dev, enum sensor_channel chan,
     case SENSOR_ATTR_LIS2DH_CLICK_TIME_LIMIT_MS:
     case SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS:
     case SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS:
+    case SENSOR_ATTR_LIS2DH_ACT_THS:
+    case SENSOR_ATTR_LIS2DH_ACT_DUR_MS:
         return lis2dh_acc_slope_config(dev, attr, val);
 #endif
 #ifdef CONFIG_LIS2DH_ACCEL_HP_FILTERS

@@ -193,6 +193,9 @@
 #define LIS2DH_REG_TIME_LATENCY		0x3C
 #define LIS2DH_REG_TIME_WINDOW		0x3D
 
+#define LIS2DH_REG_ACT_THS		0x3E
+#define LIS2DH_REG_ACT_DUR		0x3F
+
 /* sample buffer size includes status register */
 #define LIS2DH_BUF_SZ			7
 

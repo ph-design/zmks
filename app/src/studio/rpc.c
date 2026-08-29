@@ -51,7 +51,7 @@ zmk_studio_Response zmk_rpc_subsystem_delegate_to_subs(const struct zmk_rpc_subs
             return sub_handler->func(req);
         }
     }
-    LOG_ERR("No handler func found for %d", which_req);
+    LOG_ERR("No handler func found for %d (subsystem %d)", which_req, subsys->subsystem_choice);
     return ZMK_RPC_RESPONSE(meta, simple_error, zmk_meta_ErrorConditions_RPC_NOT_FOUND);
 }
 
