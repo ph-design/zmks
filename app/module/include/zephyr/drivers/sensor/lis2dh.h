@@ -25,7 +25,6 @@ enum sensor_attribute_lis2dh {
     SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS,
     SENSOR_ATTR_LIS2DH_ACT_THS,
     SENSOR_ATTR_LIS2DH_ACT_DUR_MS,
-    SENSOR_ATTR_LIS2DH_CLICK_AXES,
 };
 
 enum sensor_channel_lis2dh {
@@ -34,11 +33,10 @@ enum sensor_channel_lis2dh {
     SENSOR_CHAN_LIS2DH_CLICK_SRC,
 };
 
-/* CLICK_SRC bit layout (datasheet Table 73) */
-#define LIS2DH_CLICK_SRC_IA BIT(7)
-#define LIS2DH_CLICK_SRC_DCLICK BIT(6)
-#define LIS2DH_CLICK_SRC_SCLICK BIT(5)
-#define LIS2DH_CLICK_SRC_SIGN BIT(4)
+#define LIS2DH_CLICK_SRC_IA BIT(6)
+#define LIS2DH_CLICK_SRC_DCLICK BIT(5)
+#define LIS2DH_CLICK_SRC_SCLICK BIT(4)
+#define LIS2DH_CLICK_SRC_SIGN BIT(3)
 #define LIS2DH_CLICK_SRC_Z BIT(2)
 #define LIS2DH_CLICK_SRC_Y BIT(1)
 #define LIS2DH_CLICK_SRC_X BIT(0)

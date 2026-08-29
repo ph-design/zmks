@@ -186,7 +186,6 @@ static int lis2dh_trigger_anym_tap_set(const struct device *dev, sensor_trigger_
         return status;
     }
 
-    // serialize int2 start in thread to sync output sampling with first interrupt
     atomic_set_bit(&lis2dh->trig_flags, START_TRIG_INT2);
 #if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_give(&lis2dh->gpio_sem);
@@ -211,8 +210,6 @@ static int lis2dh_trigger_dtap_set(const struct device *dev, sensor_trigger_hand
     return lis2dh_trigger_anym_tap_set(dev, handler, trig);
 }
 
-// CTRL2 single source of truth: HPF routed when any-motion (OR mode) or click
-// armed; HPM=11 autoresets the reference so a static gravity delta can't retrigger.
 static int lis2dh_ctrl2_sync(const struct device *dev) {
     const struct lis2dh_config *cfg = dev->config;
     struct lis2dh_data *lis2dh = dev->data;
@@ -266,16 +263,11 @@ static int lis2dh_start_trigger_int2(const struct device *dev) {
         }
     }
 
-    // route HPF: any-motion OR mode + click engine (raw gravity would pin one
-    // polarity above threshold, so no crossings without HPCLICK); HPM=11
-    // autoresets the reference (Table 34)
     status = lis2dh_ctrl2_sync(dev);
     if (status < 0) {
         LOG_ERR("Failed to route high-pass filter");
         return status;
     }
-
-    // reading REFERENCE snaps the HPF reference to current attitude
     status = lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_REFERENCE, &reg);
     if (status < 0) {
         LOG_ERR("Failed to reset high-pass filter reference");
@@ -294,8 +286,7 @@ static int lis2dh_start_trigger_int2(const struct device *dev) {
     reg = LIS2DH_REG_CFG_CLICK;
     mask = LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS | LIS2DH_EN_CLICK_XD |
            LIS2DH_EN_CLICK_YD | LIS2DH_EN_CLICK_ZD;
-    val = (has_anyt ? (LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS) : 0) |
-          (has_dtap ? (LIS2DH_EN_CLICK_XD | LIS2DH_EN_CLICK_YD | LIS2DH_EN_CLICK_ZD) : 0);
+    val = (has_anyt ? LIS2DH_EN_CLICK_YS : 0) | (has_dtap ? LIS2DH_EN_CLICK_YD : 0);
     status = lis2dh->hw_tf->update_reg(dev, reg, mask, val);
     if (status < 0) {
         LOG_ERR("Failed to configure tap interrupt");
@@ -312,14 +303,22 @@ static int lis2dh_start_trigger_int2(const struct device *dev) {
     }
     // diagnostics readback; ctrl0 only exists on LIS2DH12 (0x00 on LIS3DH)
     uint8_t rb0 = 0, rb2 = 0, rb5 = 0, rbcfg = 0, rbths = 0, rb6 = 0;
+    uint8_t rbcc = 0, rbcths = 0, rbtl = 0, rblat = 0, rbwin = 0;
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL0, &rb0);
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL2, &rb2);
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL5, &rb5);
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_INT2_CFG, &rbcfg);
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_INT2_THS, &rbths);
     lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL6, &rb6);
+    lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CFG_CLICK, &rbcc);
+    lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CFG_CLICK_THS, &rbcths);
+    lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_TIME_LIMIT, &rbtl);
+    lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_TIME_LATENCY, &rblat);
+    lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_TIME_WINDOW, &rbwin);
     LOG_INF("int2 arm: ctrl0=%02x ctrl2=%02x ctrl5=%02x int2_cfg=%02x ths=%02x ctrl6=%02x", rb0,
             rb2, rb5, rbcfg, rbths, rb6);
+    LOG_INF("click arm: cfg=%02x ths=%02x limit=%02x latency=%02x window=%02x", rbcc, rbcths, rbtl,
+            rblat, rbwin);
     return 0;
 }
 
@@ -444,14 +443,6 @@ int lis2dh_acc_slope_config(const struct device *dev, enum sensor_attribute attr
 
         // 0 disables sleep-to-wake, nonzero arms it
         status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_ACT_THS, val->val1);
-    } else if ((int)attr == SENSOR_ATTR_LIS2DH_CLICK_AXES) {
-        if (val->val1 < 0 || (val->val1 & ~0x3F) != 0) {
-            return -EINVAL;
-        }
-
-        LOG_INF("click_cfg=0x%02x", val->val1);
-
-        status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CFG_CLICK, val->val1);
     } else if ((int)attr == SENSOR_ATTR_LIS2DH_ACT_DUR_MS) {
         // datasheet 3.2.4: duration = (8*N+1)/ODR, so N = (ms*ODR/1000 - 1)/8
         int odr = lis2dh_current_odr_hz(dev);

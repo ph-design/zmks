@@ -64,7 +64,6 @@ static void tap_to_proto(const struct zmk_motion_tap_config *cfg, zmk_motion_Tap
     out->latency_ms = cfg->latency_ms;
     out->window_ms = cfg->window_ms;
     out->layer_mask = cfg->layer_mask;
-    out->click_axes = cfg->click_axes;
     out->has_left_single_binding = cfg->left_single.behavior_dev != NULL;
     out->has_left_double_binding = cfg->left_double.behavior_dev != NULL;
     out->has_right_single_binding = cfg->right_single.behavior_dev != NULL;
@@ -82,7 +81,6 @@ static bool tap_from_proto(const zmk_motion_TapConfig *in, struct zmk_motion_tap
     out->latency_ms = in->latency_ms;
     out->window_ms = in->window_ms;
     out->layer_mask = in->layer_mask;
-    out->click_axes = in->click_axes;
 
     bool ok = true;
     ok &= binding_from_proto(&in->left_single_binding, &out->left_single);

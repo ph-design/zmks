@@ -75,11 +75,14 @@ static int orientation_from_ums2(int64_t x, int64_t y, int64_t z) {
 enum tap_side { TAP_LEFT, TAP_RIGHT, TAP_SIDE_COUNT };
 
 // single source for boot defaults and settings reset
-#define TAP_CONFIG_DEFAULTS                                                                      \
-    {.enabled = false, .threshold = 40, .time_limit_ms = 60, .latency_ms = 80, .window_ms = 240, \
-     .layer_mask = 0, .click_axes = 0x3F}
-#define CARRY_CONFIG_DEFAULTS \
-    {.enabled = true, .motion_threshold = 32, .motion_duration_ms = 60000}
+#define TAP_CONFIG_DEFAULTS                                                                        \
+    {.enabled = false,                                                                             \
+     .threshold = 40,                                                                              \
+     .time_limit_ms = 120,                                                                         \
+     .latency_ms = 80,                                                                             \
+     .window_ms = 240,                                                                             \
+     .layer_mask = 0}
+#define CARRY_CONFIG_DEFAULTS {.enabled = true, .motion_threshold = 32, .motion_duration_ms = 60000}
 #define STILL_WAKE_CONFIG_DEFAULTS {.enabled = true, .settle_duration_ms = SETTLE_DEFAULTS_MS}
 #define SLEEP_WAKE_CONFIG_DEFAULTS {.enabled = false, .threshold = 16, .duration_ms = 10000}
 
@@ -261,8 +264,8 @@ static void carry_check_work_cb(struct k_work *work) {
     static uint32_t last_logged;
     if ((tick++ & 3) == 0) {
         uint32_t cnt = atomic_get(&anym_trigger_count);
-        LOG_DBG("carry diag: anym/s=%u last_motion_age=%lld streak=%d",
-                (cnt - last_logged) / 2, now - last_motion, streak_start != 0);
+        LOG_DBG("carry diag: anym/s=%u last_motion_age=%lld streak=%d", (cnt - last_logged) / 2,
+                now - last_motion, streak_start != 0);
         last_logged = cnt;
     }
 
@@ -375,8 +378,8 @@ static void motion_live_work_cb(struct k_work *work) {
         live_sample_count = 0;
         if (live_window_fetched) {
             live.magnitude = live_window_peak;
-            live.orientation = orientation_from_ums2(live_baseline[0], live_baseline[1],
-                                                     live_baseline[2]);
+            live.orientation =
+                orientation_from_ums2(live_baseline[0], live_baseline[1], live_baseline[2]);
             raise_zmk_motion_live_state_changed(
                 (struct zmk_motion_live_state_changed){.state = live});
         }
@@ -398,7 +401,8 @@ static int apply_tap_hw(void) {
     struct sensor_value v;
     int rc;
 
-    v.val1 = tap_cfg.threshold;
+    uint32_t ths_reg = tap_cfg.threshold / 2;
+    v.val1 = ths_reg < 1 ? 1 : ths_reg;
     v.val2 = 0;
     rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_THS, &v);
     if (rc < 0) {
@@ -422,10 +426,10 @@ static int apply_tap_hw(void) {
 }
 
 static void apply_tap_triggers(void) {
-    static const struct sensor_trigger tap_trig = {
-        .type = SENSOR_TRIG_TAP, .chan = SENSOR_CHAN_ACCEL_XYZ};
-    static const struct sensor_trigger dtap_trig = {
-        .type = SENSOR_TRIG_DOUBLE_TAP, .chan = SENSOR_CHAN_ACCEL_XYZ};
+    static const struct sensor_trigger tap_trig = {.type = SENSOR_TRIG_TAP,
+                                                   .chan = SENSOR_CHAN_ACCEL_XYZ};
+    static const struct sensor_trigger dtap_trig = {.type = SENSOR_TRIG_DOUBLE_TAP,
+                                                    .chan = SENSOR_CHAN_ACCEL_XYZ};
 
     // Arm the engine whenever the feature is on, even with no binding set,
     // so the tap test panel can show recognition while tuning. fire_binding
@@ -434,14 +438,6 @@ static void apply_tap_triggers(void) {
 
     sensor_trigger_set(imu, &tap_trig, on ? tap_trigger_handler : NULL);
     sensor_trigger_set(imu, &dtap_trig, on ? dtap_trigger_handler : NULL);
-
-    // final word on CLICK_CFG: the arm write enables every axis, so re-apply
-    // the configured axis mask (0 while tap is off keeps the engine silent)
-    struct sensor_value axes = {
-        .val1 = on ? tap_cfg.click_axes : 0,
-        .val2 = 0,
-    };
-    sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_AXES, &axes);
 }
 
 static int apply_sleep_wake_hw(void) {
@@ -460,8 +456,8 @@ static int apply_sleep_wake_hw(void) {
 }
 
 static int apply_carry_hw(void) {
-    static const struct sensor_trigger delta_trig = {
-        .type = SENSOR_TRIG_DELTA, .chan = SENSOR_CHAN_ACCEL_XYZ};
+    static const struct sensor_trigger delta_trig = {.type = SENSOR_TRIG_DELTA,
+                                                     .chan = SENSOR_CHAN_ACCEL_XYZ};
     struct sensor_value th;
     counts_to_ms2(carry_cfg.motion_threshold, &th);
     int rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_SLOPE_TH, &th);
@@ -476,18 +472,19 @@ static int apply_carry_hw(void) {
     sensor_trigger_set(imu, &delta_trig, carry_cfg.enabled ? carry_trigger_handler : NULL);
     if (carry_cfg.enabled) {
         k_work_schedule(&carry_work, K_MSEC(CARRY_CHECK_PERIOD_MS));
-
-        // with still-wake on, watch the post-boot settle window
-        if (still_wake_cfg.enabled) {
-            settle_armed = true;
-            k_work_schedule(&settle_work, K_MSEC(still_wake_cfg.settle_duration_ms));
-        }
     } else {
         k_work_cancel_delayable(&carry_work);
         k_work_cancel_delayable(&settle_work);
         settle_armed = false;
     }
     return 0;
+}
+
+static void arm_boot_settle_check(void) {
+    if (carry_cfg.enabled && still_wake_cfg.enabled) {
+        settle_armed = true;
+        k_work_schedule(&settle_work, K_MSEC(still_wake_cfg.settle_duration_ms));
+    }
 }
 
 bool zmk_motion_available(void) { return device_is_ready(imu); }
@@ -500,10 +497,11 @@ int zmk_motion_get_tap_config(struct zmk_motion_tap_config *out) {
 }
 
 int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg) {
-    if (cfg->threshold > 127 || (cfg->click_axes & ~0x3FU) != 0) {
+    if (cfg->threshold > 127) {
         return -EINVAL;
     }
 
+    struct zmk_motion_tap_config prev = tap_cfg;
     tap_cfg = *cfg;
     for (int i = 0; i < TAP_SIDE_COUNT; i++) {
         atomic_set(&pending_singles[i].armed, 0);
@@ -512,6 +510,9 @@ int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg) {
     int rc = apply_tap_hw();
     if (rc < 0) {
         LOG_WRN("tap config apply failed: %d", rc);
+        、 tap_cfg = prev;
+        apply_tap_hw();
+        return rc;
     }
     apply_tap_triggers();
     return rc;
@@ -539,10 +540,7 @@ int zmk_motion_get_still_wake_config(struct zmk_motion_still_wake_config *out) {
 int zmk_motion_set_still_wake_config(const struct zmk_motion_still_wake_config *cfg) {
     still_wake_cfg = *cfg;
 
-    if (cfg->enabled && carry_cfg.enabled) {
-        settle_armed = true;
-        k_work_schedule(&settle_work, K_MSEC(cfg->settle_duration_ms));
-    } else {
+    if (!cfg->enabled) {
         k_work_cancel_delayable(&settle_work);
         settle_armed = false;
     }
@@ -586,7 +584,6 @@ struct motion_tap_blob {
     uint32_t latency_ms;
     uint32_t window_ms;
     uint32_t layer_mask;
-    uint32_t click_axes;
     zmk_behavior_local_id_t local_ids[4];
     uint32_t param1[4];
     uint32_t param2[4];
@@ -660,8 +657,7 @@ int zmk_motion_save_state(void) {
                                  .time_limit_ms = tap_cfg.time_limit_ms,
                                  .latency_ms = tap_cfg.latency_ms,
                                  .window_ms = tap_cfg.window_ms,
-                                 .layer_mask = tap_cfg.layer_mask,
-                                 .click_axes = tap_cfg.click_axes};
+                                 .layer_mask = tap_cfg.layer_mask};
     binding_to_store(&tap_cfg.left_single, 0, &tb);
     binding_to_store(&tap_cfg.left_double, 1, &tb);
     binding_to_store(&tap_cfg.right_single, 2, &tb);
@@ -716,8 +712,7 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
                                 void *cb_arg) {
     if (strcmp(name, "tap") == 0) {
         struct motion_tap_blob tb;
-        if (len != sizeof(tb) ||
-            read_cb(cb_arg, &tb, sizeof(tb)) != sizeof(tb) ||
+        if (len != sizeof(tb) || read_cb(cb_arg, &tb, sizeof(tb)) != sizeof(tb) ||
             tb.version != MOTION_SETTINGS_VERSION) {
             return -EINVAL;
         }
@@ -727,7 +722,6 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
         tap_cfg.latency_ms = tb.latency_ms;
         tap_cfg.window_ms = tb.window_ms;
         tap_cfg.layer_mask = tb.layer_mask;
-        tap_cfg.click_axes = tb.click_axes;
         // no short-circuit: all four bindings must be populated even if one is unknown
         bool ok = binding_from_store(&tap_cfg.left_single, 0, &tb) &
                   binding_from_store(&tap_cfg.left_double, 1, &tb) &
@@ -738,8 +732,7 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
 
     if (strcmp(name, "carry") == 0) {
         struct motion_carry_blob cb;
-        if (len != sizeof(cb) ||
-            read_cb(cb_arg, &cb, sizeof(cb)) != sizeof(cb) ||
+        if (len != sizeof(cb) || read_cb(cb_arg, &cb, sizeof(cb)) != sizeof(cb) ||
             cb.version != MOTION_SETTINGS_VERSION) {
             return -EINVAL;
         }
@@ -751,8 +744,7 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
 
     if (strcmp(name, "still") == 0) {
         struct motion_still_wake_blob sw;
-        if (len != sizeof(sw) ||
-            read_cb(cb_arg, &sw, sizeof(sw)) != sizeof(sw) ||
+        if (len != sizeof(sw) || read_cb(cb_arg, &sw, sizeof(sw)) != sizeof(sw) ||
             sw.version != MOTION_SETTINGS_VERSION) {
             return -EINVAL;
         }
@@ -763,8 +755,7 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
 
     if (strcmp(name, "slpwk") == 0) {
         struct motion_sleep_wake_blob wk;
-        if (len != sizeof(wk) ||
-            read_cb(cb_arg, &wk, sizeof(wk)) != sizeof(wk) ||
+        if (len != sizeof(wk) || read_cb(cb_arg, &wk, sizeof(wk)) != sizeof(wk) ||
             wk.version != MOTION_SETTINGS_VERSION) {
             return -EINVAL;
         }
@@ -787,6 +778,7 @@ static int motion_settings_commit(void) {
     apply_tap_triggers();
     apply_carry_hw();
     apply_sleep_wake_hw();
+    arm_boot_settle_check();
     return 0;
 }
 
@@ -805,6 +797,7 @@ static int zmk_motion_init(void) {
     apply_tap_triggers();
     apply_carry_hw();
     apply_sleep_wake_hw();
+    arm_boot_settle_check();
 
     return 0;
 }

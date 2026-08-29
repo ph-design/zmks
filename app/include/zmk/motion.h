@@ -21,7 +21,6 @@ struct zmk_motion_tap_config {
     struct zmk_behavior_binding right_single;
     struct zmk_behavior_binding right_double;
     uint32_t layer_mask;
-    uint32_t click_axes;
 };
 
 struct zmk_motion_carry_config {
