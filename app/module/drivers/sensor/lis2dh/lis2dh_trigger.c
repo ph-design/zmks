@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#define DT_DRV_COMPAT st_lis2dh
+#define DT_DRV_COMPAT zmk_lis2dh
 
 #include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
@@ -60,9 +60,9 @@ static int lis2dh_trigger_drdy_set(const struct device *dev, enum sensor_channel
 
     // serialize int1 start in thread to sync output sampling with first interrupt
     atomic_set_bit(&lis2dh->trig_flags, START_TRIG_INT1);
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_give(&lis2dh->gpio_sem);
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
     k_work_submit(&lis2dh->work);
 #endif
 
@@ -187,9 +187,9 @@ static int lis2dh_trigger_anym_tap_set(const struct device *dev, sensor_trigger_
     }
 
     atomic_set_bit(&lis2dh->trig_flags, START_TRIG_INT2);
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_give(&lis2dh->gpio_sem);
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
     k_work_submit(&lis2dh->work);
 #endif
     return 0;
@@ -481,9 +481,9 @@ static void lis2dh_gpio_int1_callback(const struct device *dev, struct gpio_call
     // level triggered: disable until processed
     setup_int1(lis2dh->dev, false);
 
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_give(&lis2dh->gpio_sem);
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
     k_work_submit(&lis2dh->work);
 #endif
 }
@@ -499,9 +499,9 @@ static void lis2dh_gpio_int2_callback(const struct device *dev, struct gpio_call
     // level triggered: disable until processed
     setup_int2(lis2dh->dev, false);
 
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_give(&lis2dh->gpio_sem);
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
     k_work_submit(&lis2dh->work);
 #endif
 }
@@ -593,7 +593,7 @@ static void lis2dh_thread_cb(const struct device *dev) {
     }
 }
 
-#ifdef CONFIG_LIS2DH_TRIGGER_OWN_THREAD
+#ifdef CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD
 static void lis2dh_thread(void *p1, void *p2, void *p3) {
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
@@ -607,7 +607,7 @@ static void lis2dh_thread(void *p1, void *p2, void *p3) {
 }
 #endif
 
-#ifdef CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD
+#ifdef CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD
 static void lis2dh_work_cb(struct k_work *work) {
     struct lis2dh_data *lis2dh = CONTAINER_OF(work, struct lis2dh_data, work);
 
@@ -622,13 +622,13 @@ int lis2dh_init_interrupt(const struct device *dev) {
 
     lis2dh->dev = dev;
 
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
     k_sem_init(&lis2dh->gpio_sem, 0, K_SEM_MAX_LIMIT);
 
-    k_thread_create(&lis2dh->thread, lis2dh->thread_stack, CONFIG_LIS2DH_THREAD_STACK_SIZE,
-                    lis2dh_thread, lis2dh, NULL, NULL, K_PRIO_COOP(CONFIG_LIS2DH_THREAD_PRIORITY),
+    k_thread_create(&lis2dh->thread, lis2dh->thread_stack, CONFIG_ZMK_LIS2DH_THREAD_STACK_SIZE,
+                    lis2dh_thread, lis2dh, NULL, NULL, K_PRIO_COOP(CONFIG_ZMK_LIS2DH_THREAD_PRIORITY),
                     0, K_NO_WAIT);
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
     k_work_init(&lis2dh->work, lis2dh_work_cb);
 #endif
 

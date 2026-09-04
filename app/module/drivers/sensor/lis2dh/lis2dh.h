@@ -42,7 +42,7 @@
 #define LIS2DH_ACCEL_XYZ_MASK		BIT_MASK(3)
 
 #define LIS2DH_LP_EN_BIT_MASK		BIT(3)
-#if defined(CONFIG_LIS2DH_OPER_MODE_LOW_POWER)
+#if defined(CONFIG_ZMK_LIS2DH_OPER_MODE_LOW_POWER)
 	#define LIS2DH_LP_EN_BIT	BIT(3)
 #else
 	#define LIS2DH_LP_EN_BIT	0
@@ -60,23 +60,23 @@
 #define LIS2DH_ODR_8			8
 #define LIS2DH_ODR_9			9
 
-#if defined(CONFIG_LIS2DH_ODR_1)
+#if defined(CONFIG_ZMK_LIS2DH_ODR_1)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_1
-#elif defined(CONFIG_LIS2DH_ODR_2)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_2)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_2
-#elif defined(CONFIG_LIS2DH_ODR_3)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_3)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_3
-#elif defined(CONFIG_LIS2DH_ODR_4) || defined(CONFIG_LIS2DH_ODR_RUNTIME)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_4) || defined(CONFIG_ZMK_LIS2DH_ODR_RUNTIME)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_4
-#elif defined(CONFIG_LIS2DH_ODR_5)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_5)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_5
-#elif defined(CONFIG_LIS2DH_ODR_6)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_6)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_6
-#elif defined(CONFIG_LIS2DH_ODR_7)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_7)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_7
-#elif defined(CONFIG_LIS2DH_ODR_8)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_8)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_8
-#elif defined(CONFIG_LIS2DH_ODR_9_NORMAL) || defined(CONFIG_LIS2DH_ODR_9_LOW)
+#elif defined(CONFIG_ZMK_LIS2DH_ODR_9_NORMAL) || defined(CONFIG_ZMK_LIS2DH_ODR_9_LOW)
 	#define LIS2DH_ODR_IDX		LIS2DH_ODR_9
 #endif
 
@@ -107,20 +107,20 @@
 #define LIS2DH_FS_SHIFT			4
 #define LIS2DH_FS_MASK			(BIT_MASK(2) << LIS2DH_FS_SHIFT)
 
-#if defined(CONFIG_LIS2DH_ACCEL_RANGE_2G) ||\
-	defined(CONFIG_LIS2DH_ACCEL_RANGE_RUNTIME)
+#if defined(CONFIG_ZMK_LIS2DH_ACCEL_RANGE_2G) ||\
+	defined(CONFIG_ZMK_LIS2DH_ACCEL_RANGE_RUNTIME)
 	#define LIS2DH_FS_IDX		0
-#elif defined(CONFIG_LIS2DH_ACCEL_RANGE_4G)
+#elif defined(CONFIG_ZMK_LIS2DH_ACCEL_RANGE_4G)
 	#define LIS2DH_FS_IDX		1
-#elif defined(CONFIG_LIS2DH_ACCEL_RANGE_8G)
+#elif defined(CONFIG_ZMK_LIS2DH_ACCEL_RANGE_8G)
 	#define LIS2DH_FS_IDX		2
-#elif defined(CONFIG_LIS2DH_ACCEL_RANGE_16G)
+#elif defined(CONFIG_ZMK_LIS2DH_ACCEL_RANGE_16G)
 	#define LIS2DH_FS_IDX		3
 #endif
 
 #define LIS2DH_FS_SELECT(fs)		((fs) << LIS2DH_FS_SHIFT)
 #define LIS2DH_FS_BITS			(LIS2DH_FS_SELECT(LIS2DH_FS_IDX))
-#if defined(CONFIG_LIS2DH_OPER_MODE_HIGH_RES)
+#if defined(CONFIG_ZMK_LIS2DH_OPER_MODE_HIGH_RES)
 	#define LIS2DH_HR_BIT		BIT(3)
 #else
 	#define LIS2DH_HR_BIT		0
@@ -227,12 +227,12 @@ struct temperature {
 struct lis2dh_config {
 	int (*bus_init)(const struct device *dev);
 	const union lis2dh_bus_cfg bus_cfg;
-#ifdef CONFIG_LIS2DH_TRIGGER
+#ifdef CONFIG_ZMK_LIS2DH_TRIGGER
 	const struct gpio_dt_spec gpio_drdy;
 	const struct gpio_dt_spec gpio_int;
 	const uint8_t int1_mode;
 	const uint8_t int2_mode;
-#endif /* CONFIG_LIS2DH_TRIGGER */
+#endif /* CONFIG_ZMK_LIS2DH_TRIGGER */
 	struct {
 		bool is_lsm303agr_dev : 1;
 		bool disc_pull_up : 1;
@@ -240,7 +240,7 @@ struct lis2dh_config {
 		bool anym_latch : 1;
 		uint8_t anym_mode : 2;
 	} hw;
-#ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
+#ifdef CONFIG_ZMK_LIS2DH_MEASURE_TEMPERATURE
 	const struct temperature temperature;
 #endif
 };
@@ -266,7 +266,7 @@ struct lis2dh_data {
 	/* current scaling factor, in micro m/s^2 / lsb */
 	uint32_t scale;
 
-#ifdef CONFIG_LIS2DH_MEASURE_TEMPERATURE
+#ifdef CONFIG_ZMK_LIS2DH_MEASURE_TEMPERATURE
 	struct sensor_value temperature;
 #endif
 
@@ -275,7 +275,7 @@ struct lis2dh_data {
 
 	uint8_t reg_ctrl1_active_val;
 
-#ifdef CONFIG_LIS2DH_TRIGGER
+#ifdef CONFIG_ZMK_LIS2DH_TRIGGER
 	const struct device *dev;
 	struct gpio_callback gpio_int1_cb;
 	struct gpio_callback gpio_int2_cb;
@@ -294,15 +294,15 @@ struct lis2dh_data {
 	/* CLICK_SRC latched at interrupt time; the register self-clears on read */
 	uint8_t click_src;
 
-#if defined(CONFIG_LIS2DH_TRIGGER_OWN_THREAD)
-	K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_LIS2DH_THREAD_STACK_SIZE);
+#if defined(CONFIG_ZMK_LIS2DH_TRIGGER_OWN_THREAD)
+	K_KERNEL_STACK_MEMBER(thread_stack, CONFIG_ZMK_LIS2DH_THREAD_STACK_SIZE);
 	struct k_thread thread;
 	struct k_sem gpio_sem;
-#elif defined(CONFIG_LIS2DH_TRIGGER_GLOBAL_THREAD)
+#elif defined(CONFIG_ZMK_LIS2DH_TRIGGER_GLOBAL_THREAD)
 	struct k_work work;
 #endif
 
-#endif /* CONFIG_LIS2DH_TRIGGER */
+#endif /* CONFIG_ZMK_LIS2DH_TRIGGER */
 };
 
 #if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
@@ -310,7 +310,7 @@ int lis2dh_spi_access(struct lis2dh_data *ctx, uint8_t cmd,
 		      void *data, size_t length);
 #endif
 
-#ifdef CONFIG_LIS2DH_TRIGGER
+#ifdef CONFIG_ZMK_LIS2DH_TRIGGER
 int lis2dh_trigger_set(const struct device *dev,
 		       const struct sensor_trigger *trig,
 		       sensor_trigger_handler_t handler);

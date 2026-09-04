@@ -8,7 +8,7 @@
  * https://www.st.com/resource/en/datasheet/lis2dh.pdf
  */
 
-#define DT_DRV_COMPAT st_lis2dh
+#define DT_DRV_COMPAT zmk_lis2dh
 
 #include <string.h>
 #include "lis2dh.h"
