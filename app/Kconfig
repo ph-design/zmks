@@ -464,7 +464,7 @@ menuconfig ZMK_MOTION
     depends on SENSOR
     depends on SETTINGS
     depends on DT_HAS_ZMK_LIS2DH_ENABLED
-    depends on LIS2DH_TRIGGER
+    depends on ZMK_LIS2DH_TRIGGER
     select ZMK_BEHAVIOR_LOCAL_IDS
     select ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS
 
