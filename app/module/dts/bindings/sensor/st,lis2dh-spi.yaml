@@ -6,4 +6,4 @@ description: |
 
 compatible: "zmk,lis2dh"
 
-include: ["spi-device.yaml", "st,lis2dh-common.yaml"]
+include: ["spi-device.yaml", "zmk,lis2dh-common.yaml"]

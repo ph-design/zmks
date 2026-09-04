@@ -5,4 +5,4 @@ description: STMicroelectronics LIS2DH12 3-axis accelerometer
 
 compatible: "zmk,lis2dh12"
 
-include: ["i2c-device.yaml", "st,lis2dh-common.yaml"]
+include: ["i2c-device.yaml", "zmk,lis2dh-common.yaml"]
