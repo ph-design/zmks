@@ -510,7 +510,7 @@ int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg) {
     int rc = apply_tap_hw();
     if (rc < 0) {
         LOG_WRN("tap config apply failed: %d", rc);
-        、 tap_cfg = prev;
+        tap_cfg = prev;
         apply_tap_hw();
         return rc;
     }

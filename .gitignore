@@ -16,3 +16,11 @@ __pycache__
 
 # clangd
 app/.cache/
+/app/build-multi-log
+/app/build-multi
+/app/build-native
+/app/build-evo-check
+/app/build-evo-noimu
+/app/build-evo-nomotion
+/app/build-evo-usb-motion
+/app/build-motion-check
