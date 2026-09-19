@@ -13,6 +13,10 @@
 #include <zmk/endpoints.h>
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
+#include <zmk/2g4.h>
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -33,6 +37,10 @@ int main(void) {
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
     zmk_endpoints_apply_preferred_transport();
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
+    zmk_2g4_dongle_start();
 #endif
 
 #ifdef CONFIG_ZMK_DISPLAY

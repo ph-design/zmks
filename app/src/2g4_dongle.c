@@ -34,6 +34,7 @@ static bool report_is_release(const uint8_t *body, size_t len) {
 #define ZMK_2G4_KB_TIMEOUT_MS 500
 
 static bool kb_connected;
+static bool rx_started;
 static uint32_t rx_total;
 static uint32_t rx_decrypt_fail;
 static struct k_work_delayable kb_lost_work;
@@ -159,8 +160,6 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
         }
         break;
     }
-    case ZMK_ESB_EVENT_TX_SUCCESS:
-        break;
     case ZMK_ESB_EVENT_TX_FAILED:
         LOG_WRN("ACK payload TX failed");
         break;
@@ -196,6 +195,17 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 
 #endif /* CONFIG_ZMK_HID_INDICATORS */
 
+bool zmk_2g4_dongle_kb_connected(void) { return kb_connected; }
+
+void zmk_2g4_dongle_rx_stats(uint32_t *rx_total_out, uint32_t *decrypt_fail_out) {
+    if (rx_total_out) {
+        *rx_total_out = rx_total;
+    }
+    if (decrypt_fail_out) {
+        *decrypt_fail_out = rx_decrypt_fail;
+    }
+}
+
 static int zmk_2g4_dongle_init(void) {
     k_work_init_delayable(&kb_lost_work, kb_lost_handler);
 
@@ -214,26 +224,33 @@ static int zmk_2g4_dongle_init(void) {
         return ret;
     }
 
-    uint8_t base_addr[4];
-    uint8_t prefix[1];
-    struct zmk_2g4_addr addr;
-    zmk_2g4_addr_get(&addr);
-    memcpy(base_addr, addr.base, sizeof(base_addr));
-    prefix[0] = addr.prefix;
-
-    zmk_esb_set_base_address_0(base_addr);
-    zmk_esb_set_prefixes(prefix, 1);
-
-    zmk_esb_set_rf_channel(addr.rf_channel);
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
+    return 0;
+}
 
-    ret = zmk_esb_start_rx();
+int zmk_2g4_dongle_start(void) {
+    struct zmk_2g4_addr addr;
+
+    zmk_2g4_addr_get(&addr);
+
+    if (rx_started) {
+        zmk_esb_stop_rx();
+        zmk_esb_flush_tx();
+        zmk_esb_flush_rx();
+    }
+
+    zmk_esb_set_base_address_0(addr.base);
+    zmk_esb_set_prefixes(&addr.prefix, 1);
+    zmk_esb_set_rf_channel(addr.rf_channel);
+
+    int ret = zmk_esb_start_rx();
     if (ret) {
         LOG_ERR("ESB start RX failed: %d", ret);
         return ret;
     }
 
-    LOG_INF("2.4G dongle receiver started (%s addr, ch=%u)",
+    rx_started = true;
+    LOG_INF("2.4G dongle listening (%s addr, ch=%u)",
             zmk_2g4_addr_is_paired() ? "paired" : "default", addr.rf_channel);
     return 0;
 }
