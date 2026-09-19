@@ -33,12 +33,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CCM_SCRATCH_SIZE 43
 #define REPLAY_WINDOW 64
 
+BUILD_ASSERT(sizeof(CONFIG_ZMK_2G4_AES_KEY) == 2 * AES_KEY_SIZE + 1,
+             "Set CONFIG_ZMK_2G4_AES_KEY to a 32-hex key; empty would send plaintext");
+
 static const char *key_hex = CONFIG_ZMK_2G4_AES_KEY;
 static uint8_t factory_key[AES_KEY_SIZE];
 static bool factory_valid;
 static uint8_t aes_key[AES_KEY_SIZE];
 static bool key_valid;
-static bool key_provisioned;
 static bool using_paired;
 static bool ccm_ok;
 static uint32_t tx_session_id;
@@ -205,20 +207,16 @@ static int zmk_2g4_crypto_init(void) {
         return 0;
     }
 
-    if (strlen(key_hex) > 0) {
-        if (parse_hex_key()) {
-            LOG_ERR("Invalid 2.4G AES key (need 32 hex chars)");
-        } else {
-            factory_valid = true;
-            memcpy(aes_key, factory_key, AES_KEY_SIZE);
-            key_valid = true;
-            key_provisioned = true;
-        }
+    if (parse_hex_key()) {
+        LOG_ERR("Invalid 2.4G AES key (need 32 hex chars)");
+    } else {
+        factory_valid = true;
+        memcpy(aes_key, factory_key, AES_KEY_SIZE);
+        key_valid = true;
+        LOG_INF("2.4G AES-CCM enabled");
     }
 
     tx_session_id = 1;
-
-    LOG_INF("2.4G AES-CCM enabled");
     return 0;
 }
 
@@ -274,7 +272,6 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
         }
         memcpy(aes_key, buf, AES_KEY_SIZE);
         key_valid = true;
-        key_provisioned = true;
         using_paired = true;
         return 0;
     }
@@ -309,7 +306,6 @@ int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
     }
     memcpy(aes_key, key, AES_KEY_SIZE);
     key_valid = true;
-    key_provisioned = true;
     using_paired = true;
     return 0;
 }
@@ -390,7 +386,7 @@ int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
     __ASSERT_NO_MSG(data != NULL);
 
     if (!key_valid) {
-        return key_provisioned ? -EACCES : (int)len;
+        return -EACCES;
     }
     if (!ccm_ok) {
         return -EIO;
@@ -447,7 +443,7 @@ int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
     __ASSERT_NO_MSG(data != NULL);
 
     if (!key_valid) {
-        return key_provisioned ? -EACCES : (int)len;
+        return -EACCES;
     }
     if (!ccm_ok) {
         return -EIO;
