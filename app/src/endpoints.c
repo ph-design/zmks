@@ -286,17 +286,21 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
 #endif
 }
 
+static bool is_usb_ready(void);
+
 int zmk_endpoints_toggle_transport(void) {
     enum zmk_transport new_transport;
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-    switch (preferred_wireless_transport) {
+    switch (current_instance.transport) {
+    case ZMK_TRANSPORT_USB:
+        new_transport = ZMK_TRANSPORT_BLE;
+        break;
     case ZMK_TRANSPORT_BLE:
         new_transport = ZMK_TRANSPORT_2G4;
         break;
-    case ZMK_TRANSPORT_2G4:
     default:
-        new_transport = ZMK_TRANSPORT_BLE;
+        new_transport = is_usb_ready() ? ZMK_TRANSPORT_USB : ZMK_TRANSPORT_BLE;
         break;
     }
 #elif IS_ENABLED(CONFIG_ZMK_2G4)
