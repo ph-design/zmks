@@ -24,7 +24,7 @@ This is a fork based on [ZMK Firmware](https://github.com/zmkfirmware/zmk) (v0.3
 ### Other
 
 - ZMK Studio changes ,better UI and UX, you can try it out at [https:/zmks.phdesign.cc](https://zmks.phdesign.cc)
-- Skip idle on USB power, wired keyboard behavior when wired.
+- Better power management
 - A better settings reset firmware allow you to directly boot to bootloader
   
     AND MORE TO COME!
