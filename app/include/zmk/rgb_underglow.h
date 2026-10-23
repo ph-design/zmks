@@ -14,6 +14,7 @@ struct zmk_led_hsb {
 
 int zmk_rgb_underglow_toggle(void);
 int zmk_rgb_underglow_get_state(bool *state);
+int zmk_rgb_underglow_apply_state(void);
 int zmk_rgb_underglow_on(void);
 int zmk_rgb_underglow_off(void);
 int zmk_rgb_underglow_transient_on(void);

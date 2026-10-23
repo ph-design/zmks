@@ -19,12 +19,19 @@ LOG_MODULE_REGISTER(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+#include <zmk/rgb_underglow.h>
+#endif
+
 int main(void) {
     LOG_INF("Welcome to ZMK!\n");
 
 #if IS_ENABLED(CONFIG_SETTINGS)
     settings_subsys_init();
     settings_load();
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    zmk_rgb_underglow_apply_state();
+#endif
 #endif
 
 #ifdef CONFIG_ZMK_DISPLAY

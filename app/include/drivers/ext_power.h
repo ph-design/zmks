@@ -30,10 +30,35 @@ __subsystem struct ext_power_api {
     ext_power_enable_t enable;
     ext_power_disable_t disable;
     ext_power_get_t get;
+    ext_power_enable_t enable_transient;
+    ext_power_disable_t disable_transient;
 };
 /**
  * @endcond
  */
+
+/**
+ * @brief Enable/disable without saving the state
+ */
+static inline int ext_power_enable_transient(const struct device *dev) {
+    const struct ext_power_api *api = (const struct ext_power_api *)dev->api;
+
+    if (api->enable_transient == NULL) {
+        return -ENOTSUP;
+    }
+
+    return api->enable_transient(dev);
+}
+
+static inline int ext_power_disable_transient(const struct device *dev) {
+    const struct ext_power_api *api = (const struct ext_power_api *)dev->api;
+
+    if (api->disable_transient == NULL) {
+        return -ENOTSUP;
+    }
+
+    return api->disable_transient(dev);
+}
 
 /**
  * @brief Enable the external power output
