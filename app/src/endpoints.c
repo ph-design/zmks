@@ -6,48 +6,83 @@
 
 #include <zephyr/init.h>
 #include <zephyr/settings/settings.h>
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zephyr/sys/reboot.h>
+#endif
 
 #include <stdio.h>
 
+#if IS_ENABLED(CONFIG_ZMK_BLE)
 #include <zmk/ble.h>
+#include <zmk/hog.h>
+#endif
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zmk/2g4.h>
+#endif
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
 #include <zmk/watchdog.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
+#include <zmk/usb.h>
 #include <zmk/usb_hid.h>
-#include <zmk/hog.h>
 #include <zmk/event_manager.h>
+#if IS_ENABLED(CONFIG_ZMK_BLE)
 #include <zmk/events/ble_active_profile_changed.h>
+#endif
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/events/endpoint_changed.h>
 
 #include <zephyr/logging/log.h>
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zephyr/logging/log_ctrl.h>
+#endif
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-#define DEFAULT_TRANSPORT                                                                          \
-    COND_CODE_1(IS_ENABLED(CONFIG_ZMK_BLE), (ZMK_TRANSPORT_BLE), (ZMK_TRANSPORT_USB))
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+#define DEFAULT_TRANSPORT ZMK_TRANSPORT_BLE
+#elif IS_ENABLED(CONFIG_ZMK_2G4)
+#define DEFAULT_TRANSPORT ZMK_TRANSPORT_2G4
+#else
+#define DEFAULT_TRANSPORT ZMK_TRANSPORT_USB
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+#define DEFAULT_WIRELESS_TRANSPORT ZMK_TRANSPORT_BLE
+#define RADIO_SWITCH_SETTLE_MS 50
+#endif
 
 static struct zmk_endpoint_instance current_instance = {};
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+static enum zmk_transport preferred_wireless_transport = DEFAULT_WIRELESS_TRANSPORT;
+static enum zmk_transport active_wireless_transport = DEFAULT_WIRELESS_TRANSPORT;
+static bool radio_switching;
+static bool manual_wireless_transport_selected;
+static bool usb_was_ready;
+#else
 static enum zmk_transport preferred_transport =
     ZMK_TRANSPORT_USB; /* Used if multiple endpoints are ready */
+#endif
 
 static void update_current_endpoint(void);
 
 #if IS_ENABLED(CONFIG_SETTINGS)
 static void endpoints_save_preferred_work(struct k_work *work) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    settings_save_one("endpoints/preferred", &preferred_wireless_transport,
+                      sizeof(preferred_wireless_transport));
+#else
     settings_save_one("endpoints/preferred", &preferred_transport, sizeof(preferred_transport));
+#endif
 }
 
 static struct k_work_delayable endpoints_save_work;
-#endif
 
 static int endpoints_save_preferred(void) {
-#if IS_ENABLED(CONFIG_SETTINGS)
     return k_work_reschedule(&endpoints_save_work, K_MSEC(CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE));
-#else
-    return 0;
-#endif
 }
+#else
+static int endpoints_save_preferred(void) { return 0; }
+#endif
 
 bool zmk_endpoint_instance_eq(struct zmk_endpoint_instance a, struct zmk_endpoint_instance b) {
     if (a.transport != b.transport) {
@@ -60,6 +95,11 @@ bool zmk_endpoint_instance_eq(struct zmk_endpoint_instance a, struct zmk_endpoin
 
     case ZMK_TRANSPORT_BLE:
         return a.ble.profile_index == b.ble.profile_index;
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4:
+        return true;
+#endif
     }
 
     LOG_ERR("Invalid transport %d", a.transport);
@@ -74,6 +114,11 @@ int zmk_endpoint_instance_to_str(struct zmk_endpoint_instance endpoint, char *st
     case ZMK_TRANSPORT_BLE:
         return snprintf(str, len, "BLE:%d", endpoint.ble.profile_index);
 
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4:
+        return snprintf(str, len, "2.4G");
+#endif
+
     default:
         return snprintf(str, len, "Invalid");
     }
@@ -81,6 +126,7 @@ int zmk_endpoint_instance_to_str(struct zmk_endpoint_instance endpoint, char *st
 
 #define INSTANCE_INDEX_OFFSET_USB 0
 #define INSTANCE_INDEX_OFFSET_BLE ZMK_ENDPOINT_USB_COUNT
+#define INSTANCE_INDEX_OFFSET_2G4 (ZMK_ENDPOINT_USB_COUNT + ZMK_ENDPOINT_BLE_COUNT)
 
 int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint) {
     switch (endpoint.transport) {
@@ -89,31 +135,177 @@ int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint) {
 
     case ZMK_TRANSPORT_BLE:
         return INSTANCE_INDEX_OFFSET_BLE + endpoint.ble.profile_index;
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4:
+        return INSTANCE_INDEX_OFFSET_2G4;
+#endif
     }
 
     LOG_ERR("Invalid transport %d", endpoint.transport);
     return 0;
 }
 
+#if !(IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4))
+static bool is_valid_transport(enum zmk_transport transport) {
+    switch (transport) {
+    case ZMK_TRANSPORT_USB:
+    case ZMK_TRANSPORT_BLE:
+        return true;
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4:
+        return true;
+#endif
+    }
+
+    return false;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+
+#define RADIO_SWITCH_WATCHDOG_MS 1000
+
+static void radio_switch_watchdog_expired(struct k_timer *timer) {
+    if (!radio_switching) {
+        return;
+    }
+    LOG_ERR("Radio switch watchdog expired (>%dms), rebooting", RADIO_SWITCH_WATCHDOG_MS);
+    LOG_PANIC();
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+static K_TIMER_DEFINE(radio_switch_watchdog, radio_switch_watchdog_expired, NULL);
+
+static int switch_radio_transport(enum zmk_transport new_transport) {
+    if (radio_switching) {
+        return -EBUSY;
+    }
+
+    radio_switching = true;
+    k_timer_start(&radio_switch_watchdog, K_MSEC(RADIO_SWITCH_WATCHDOG_MS), K_NO_WAIT);
+    int ret = 0;
+
+    if (new_transport == ZMK_TRANSPORT_2G4) {
+        ret = zmk_ble_stop();
+        if (ret) {
+            LOG_ERR("BLE stop failed: %d", ret);
+            goto done;
+        }
+        k_msleep(RADIO_SWITCH_SETTLE_MS);
+        ret = zmk_2g4_start();
+        if (ret) {
+            LOG_ERR("2.4G start failed: %d", ret);
+            goto done;
+        }
+    } else if (new_transport == ZMK_TRANSPORT_BLE) {
+        zmk_2g4_stop();
+        ret = zmk_ble_start();
+        if (ret) {
+            LOG_ERR("BLE start failed: %d", ret);
+            goto done;
+        }
+    } else {
+        ret = -EINVAL;
+    }
+
+done:
+    if (ret == 0) {
+        active_wireless_transport = new_transport;
+    }
+
+    radio_switching = false;
+    k_timer_stop(&radio_switch_watchdog);
+    return ret;
+}
+
+static bool is_wireless_transport(enum zmk_transport transport) {
+    return transport == ZMK_TRANSPORT_BLE || transport == ZMK_TRANSPORT_2G4;
+}
+
+static int apply_wireless_transport(enum zmk_transport transport) {
+    if (!is_wireless_transport(transport)) {
+        return -EINVAL;
+    }
+
+    enum zmk_transport previous_transport = active_wireless_transport;
+    int ret = switch_radio_transport(transport);
+    if (ret) {
+        if (previous_transport != transport) {
+            LOG_WRN("Wireless switch failed, restoring transport %d", previous_transport);
+            switch_radio_transport(previous_transport);
+        }
+        return ret;
+    }
+
+    preferred_wireless_transport = transport;
+    update_current_endpoint();
+    return 0;
+}
+#endif
+
 int zmk_endpoints_select_transport(enum zmk_transport transport) {
     LOG_DBG("Selected endpoint transport %d", transport);
 
-    if (preferred_transport == transport) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    if (is_wireless_transport(transport)) {
+        enum zmk_transport previous_transport = preferred_wireless_transport;
+
+        manual_wireless_transport_selected = true;
+        int ret = apply_wireless_transport(transport);
+        if (ret) {
+            return ret;
+        }
+
+        if (previous_transport != preferred_wireless_transport) {
+            endpoints_save_preferred();
+        }
+
         return 0;
     }
 
+    if (transport != ZMK_TRANSPORT_USB) {
+        return -EINVAL;
+    }
+
+    manual_wireless_transport_selected = false;
+    update_current_endpoint();
+    return 0;
+#else
+    bool transport_changed = (preferred_transport != transport);
     preferred_transport = transport;
 
-    endpoints_save_preferred();
+    if (transport_changed) {
+        endpoints_save_preferred();
+    }
 
     update_current_endpoint();
 
     return 0;
+#endif
 }
 
 int zmk_endpoints_toggle_transport(void) {
-    enum zmk_transport new_transport =
+    enum zmk_transport new_transport;
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    switch (preferred_wireless_transport) {
+    case ZMK_TRANSPORT_BLE:
+        new_transport = ZMK_TRANSPORT_2G4;
+        break;
+    case ZMK_TRANSPORT_2G4:
+    default:
+        new_transport = ZMK_TRANSPORT_BLE;
+        break;
+    }
+#elif IS_ENABLED(CONFIG_ZMK_2G4)
+    new_transport =
+        (preferred_transport == ZMK_TRANSPORT_USB) ? ZMK_TRANSPORT_2G4 : ZMK_TRANSPORT_USB;
+#else
+    new_transport =
         (preferred_transport == ZMK_TRANSPORT_USB) ? ZMK_TRANSPORT_BLE : ZMK_TRANSPORT_USB;
+#endif
     return zmk_endpoints_select_transport(new_transport);
 }
 
@@ -150,6 +342,16 @@ static int send_keyboard_report(void) {
         return -ENOTSUP;
 #endif /* IS_ENABLED(CONFIG_ZMK_BLE) */
     }
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4: {
+        int err = zmk_2g4_send_keyboard_report();
+        if (err) {
+            LOG_ERR("FAILED TO SEND OVER 2.4G: %d", err);
+        }
+        return err;
+    }
+#endif
     }
 
     LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
@@ -187,6 +389,16 @@ static int send_consumer_report(void) {
         return -ENOTSUP;
 #endif /* IS_ENABLED(CONFIG_ZMK_BLE) */
     }
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4: {
+        int err = zmk_2g4_send_consumer_report();
+        if (err) {
+            LOG_ERR("FAILED TO SEND OVER 2.4G: %d", err);
+        }
+        return err;
+    }
+#endif
     }
 
     LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
@@ -240,6 +452,16 @@ int zmk_endpoints_send_mouse_report() {
         return -ENOTSUP;
 #endif /* IS_ENABLED(CONFIG_ZMK_BLE) */
     }
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4: {
+        int err = zmk_2g4_send_mouse_report();
+        if (err) {
+            LOG_ERR("FAILED TO SEND OVER 2.4G: %d", err);
+        }
+        return err;
+    }
+#endif
     }
 
     LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
@@ -259,13 +481,30 @@ static int endpoints_handle_set(const char *name, size_t len, settings_read_cb r
             return -EINVAL;
         }
 
-        int err = read_cb(cb_arg, &preferred_transport, sizeof(enum zmk_transport));
+        enum zmk_transport loaded_transport;
+        int err = read_cb(cb_arg, &loaded_transport, sizeof(loaded_transport));
         if (err <= 0) {
             LOG_ERR("Failed to read preferred endpoint from settings (err %d)", err);
             return err;
         }
 
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+        if (is_wireless_transport(loaded_transport)) {
+            preferred_wireless_transport = loaded_transport;
+        } else {
+            LOG_WRN("Invalid preferred wireless transport %d, resetting", loaded_transport);
+            preferred_wireless_transport = DEFAULT_WIRELESS_TRANSPORT;
+        }
+#else
+        preferred_transport = loaded_transport;
+
+        if (!is_valid_transport(preferred_transport)) {
+            LOG_WRN("Invalid preferred transport %d, resetting", preferred_transport);
+            preferred_transport = DEFAULT_TRANSPORT;
+        }
+
         update_current_endpoint();
+#endif
     }
 
     return 0;
@@ -283,6 +522,7 @@ static bool is_usb_ready(void) {
 #endif
 }
 
+#if !(IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4))
 static bool is_ble_ready(void) {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
     return zmk_ble_active_profile_is_connected();
@@ -291,24 +531,57 @@ static bool is_ble_ready(void) {
 #endif
 }
 
-static enum zmk_transport get_selected_transport(void) {
-    if (is_ble_ready()) {
-        if (is_usb_ready()) {
-            LOG_DBG("Both endpoint transports are ready. Using %d", preferred_transport);
-            return preferred_transport;
-        }
+static bool is_2g4_ready(void) {
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    return zmk_2g4_is_ready();
+#else
+    return false;
+#endif
+}
+#endif
 
-        LOG_DBG("Only BLE is ready.");
-        return ZMK_TRANSPORT_BLE;
+static enum zmk_transport get_selected_transport(void) {
+    bool usb = is_usb_ready();
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    if (usb && !manual_wireless_transport_selected) {
+        LOG_DBG("USB ready, selecting USB");
+        return ZMK_TRANSPORT_USB;
     }
 
-    if (is_usb_ready()) {
+    LOG_DBG("Using preferred wireless transport: %d", preferred_wireless_transport);
+    return preferred_wireless_transport;
+#else
+    bool ble = is_ble_ready();
+    bool radio_2g4 = is_2g4_ready();
+
+    int ready_count = (usb ? 1 : 0) + (ble ? 1 : 0) + (radio_2g4 ? 1 : 0);
+
+    if (ready_count > 1) {
+        LOG_DBG("Multiple transports ready. Using preferred: %d", preferred_transport);
+        return preferred_transport;
+    }
+
+    if (usb) {
         LOG_DBG("Only USB is ready.");
         return ZMK_TRANSPORT_USB;
     }
 
+    if (ble) {
+        LOG_DBG("Only BLE is ready.");
+        return ZMK_TRANSPORT_BLE;
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    if (radio_2g4) {
+        LOG_DBG("Only 2.4G is ready.");
+        return ZMK_TRANSPORT_2G4;
+    }
+#endif
+
     LOG_DBG("No endpoint transports are ready.");
     return DEFAULT_TRANSPORT;
+#endif
 }
 
 static struct zmk_endpoint_instance get_selected_instance(void) {
@@ -334,10 +607,29 @@ static int zmk_endpoints_init(void) {
     k_work_init_delayable(&endpoints_save_work, endpoints_save_preferred_work);
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4) && !IS_ENABLED(CONFIG_SETTINGS)
+    int ret = switch_radio_transport(preferred_wireless_transport);
+    if (ret) {
+        return ret;
+    }
+#endif
+
     current_instance = get_selected_instance();
 
     return 0;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+int zmk_endpoints_apply_preferred_transport(void) {
+    if (is_usb_ready()) {
+        usb_was_ready = true;
+        update_current_endpoint();
+        return 0;
+    }
+
+    return apply_wireless_transport(preferred_wireless_transport);
+}
+#endif
 
 void zmk_endpoints_clear_current(void) {
     zmk_hid_keyboard_clear();
@@ -354,10 +646,9 @@ static void update_current_endpoint(void) {
     struct zmk_endpoint_instance new_instance = get_selected_instance();
 
     if (!zmk_endpoint_instance_eq(new_instance, current_instance)) {
-        // Cancel all current keypresses so keys don't stay held on the old endpoint.
-        zmk_endpoints_clear_current();
 
         current_instance = new_instance;
+        zmk_endpoints_clear_current();
 
         char endpoint_str[ZMK_ENDPOINT_STR_LEN];
         zmk_endpoint_instance_to_str(current_instance, endpoint_str, sizeof(endpoint_str));
@@ -368,6 +659,21 @@ static void update_current_endpoint(void) {
 }
 
 static int endpoint_listener(const zmk_event_t *eh) {
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+    const struct zmk_usb_conn_state_changed *usb_event = as_zmk_usb_conn_state_changed(eh);
+    if (usb_event) {
+        bool usb_ready = is_usb_ready();
+        if (usb_ready && !usb_was_ready) {
+            manual_wireless_transport_selected = false;
+        }
+        usb_was_ready = usb_ready;
+
+        if (!usb_ready && usb_event->conn_state == ZMK_USB_CONN_NONE) {
+            return apply_wireless_transport(preferred_wireless_transport);
+        }
+    }
+#endif
+
     update_current_endpoint();
     return 0;
 }

@@ -14,6 +14,7 @@
 
 #include <zephyr/settings/settings.h>
 #include <zephyr/sys/ring_buffer.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/hci.h>
@@ -36,6 +37,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/split/bluetooth/uuid.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/ble_active_profile_changed.h>
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+#include <hal/nrf_radio.h>
+#include <nrfx.h>
+#endif
 
 #if IS_ENABLED(CONFIG_ZMK_BLE_PASSKEY_ENTRY)
 #include <zmk/events/keycode_state_changed.h>
@@ -62,6 +68,7 @@ enum advertising_type {
 
 static struct zmk_ble_profile profiles[ZMK_BLE_PROFILE_COUNT];
 static uint8_t active_profile;
+static bool ble_started;
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -180,6 +187,10 @@ int update_advertising(void) {
     bt_addr_le_t *addr;
     struct bt_conn *conn;
     enum advertising_type desired_adv = ZMK_ADV_NONE;
+
+    if (!ble_started) {
+        return 0;
+    }
 
     if (zmk_ble_active_profile_is_open()) {
         desired_adv = ZMK_ADV_CONN;
@@ -687,7 +698,47 @@ static void zmk_ble_ready(int err) {
         return;
     }
 
+    ble_started = true;
     update_advertising();
+}
+
+int zmk_ble_stop(void) {
+    if (!ble_started) {
+        return 0;
+    }
+
+    ble_started = false;
+
+    k_work_cancel(&update_advertising_work);
+
+    bt_le_adv_stop();
+    advertising_status = ZMK_ADV_NONE;
+
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    int ret = bt_disable();
+    if (ret) {
+        LOG_ERR("bt_disable failed: %d", ret);
+    }
+#endif
+
+    LOG_INF("BLE stopped");
+    return 0;
+}
+
+int zmk_ble_start(void) {
+    if (ble_started) {
+        return 0;
+    }
+
+    int err = bt_enable(NULL);
+    if (err && err != -EALREADY) {
+        LOG_ERR("bt_enable failed: %d", err);
+        return err;
+    }
+
+    zmk_ble_ready(0);
+    LOG_INF("BLE started");
+    return 0;
 }
 
 static int zmk_ble_complete_startup(void) {
@@ -761,6 +812,11 @@ static bool zmk_ble_numeric_usage_to_value(const zmk_key_t key, const zmk_key_t 
 }
 
 static int zmk_ble_handle_key_user(struct zmk_keycode_state_changed *event) {
+    /* BLE is not the active transport; do not attempt passkey handling. */
+    if (!ble_started) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
     zmk_key_t key = event->keycode;
 
     LOG_DBG("key %d", key);

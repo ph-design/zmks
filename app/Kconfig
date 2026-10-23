@@ -44,7 +44,7 @@ if SOC_SERIES_NRF52X
 # Default on for our usage until boards implement retained bootmode.
 config NRF_STORE_REBOOT_TYPE_GPREGRET
     bool
-    default y
+    default y if !RETENTION_BOOT_MODE
 
 endif # SOC_SERIES_NRF52X
 
@@ -240,6 +240,104 @@ config BT_DEVICE_NAME_MAX
     default 16
 
 endif # ZMK_BLE
+
+choice ZMK_2G4_ROLE
+    prompt "2.4GHz ESB Role"
+    optional
+
+config ZMK_2G4
+    bool "Keyboard PTX"
+    depends on (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
+    depends on SOC_SERIES_NRF52X || SOC_NRF5340_CPUAPP
+    select ZMK_ESB
+    select ENTROPY_GENERATOR
+
+config ZMK_2G4_DONGLE
+    bool "Dongle PRX"
+    depends on ZMK_USB
+    depends on SOC_SERIES_NRF52X || SOC_NRF5340_CPUAPP
+    select ZMK_ESB
+    select ENTROPY_GENERATOR
+
+endchoice
+
+if ZMK_2G4
+
+config ZMK_2G4_INIT_PRIORITY
+    int "Init priority"
+    default 50
+
+config ZMK_2G4_RETRANSMIT_COUNT
+    int "Retransmit count"
+    default 5
+    range 0 15
+
+config ZMK_2G4_RETRANSMIT_DELAY
+    int "Retransmit delay (us)"
+    default 500
+    range 500 1000
+
+config ZMK_2G4_MAX_CONSEC_FAILURES
+    int "Max consecutive TX failures before link considered lost"
+    default 40
+    range 3 200
+    help
+      Number of consecutive TX failures (including no-ACK keepalive) before
+      the keyboard considers the 2.4G link down and stops retrying.
+      At 250ms keepalive interval, 40 = 10 seconds.
+
+endif # ZMK_2G4
+
+if ZMK_2G4_DONGLE
+
+config ZMK_2G4_DONGLE_INIT_PRIORITY
+    int "Dongle init priority"
+    default 51
+
+endif # ZMK_2G4_DONGLE
+
+if ZMK_2G4 || ZMK_2G4_DONGLE
+
+config ZMK_2G4_TX_POWER
+    int "TX power (dBm)"
+    default 4
+    range -40 8
+
+config ZMK_2G4_RF_CHANNEL
+    int "RF channel (0-100)"
+    default 76
+    range 0 100
+
+config ZMK_2G4_ADDR_BASE_0
+    hex "Base address byte 0"
+    default 0x50  # 'P'
+
+config ZMK_2G4_ADDR_BASE_1
+    hex "Base address byte 1"
+    default 0x48  # 'H'
+
+config ZMK_2G4_ADDR_BASE_2
+    hex "Base address byte 2"
+    default 0x44  # 'D'
+
+config ZMK_2G4_ADDR_BASE_3
+    hex "Base address byte 3"
+    default 0x53  # 'S'
+
+config ZMK_2G4_ADDR_PREFIX
+    hex "Pipe 0 prefix"
+    default 0x4E  # 'N'  ("PHDSN")
+
+config ZMK_2G4_AES_KEY
+    string "AES-128 factory key (32 hex chars)"
+    default ""
+    help
+      16-byte AES-128 key as 32 hex characters, used as the factory key until
+      per-device pairing replaces it. Both keyboard and dongle must use the
+      same key. Required when 2.4G is enabled: leaving it empty is a build error.
+      Example: "0123456789abcdef0123456789abcdef"
+
+endif # ZMK_2G4 || ZMK_2G4_DONGLE
 
 endmenu # Output Types
 

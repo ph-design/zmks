@@ -116,6 +116,11 @@ endif()
 
 target_sources_ifdef(CONFIG_USB_DEVICE_STACK app PRIVATE src/usb.c)
 target_sources_ifdef(CONFIG_ZMK_USB app PRIVATE src/usb_hid.c)
+target_sources_ifdef(CONFIG_ZMK_2G4 app PRIVATE src/2g4.c)
+target_sources_ifdef(CONFIG_ZMK_2G4_DONGLE app PRIVATE src/2g4_dongle.c)
+if(CONFIG_ZMK_2G4 OR CONFIG_ZMK_2G4_DONGLE)
+  target_sources(app PRIVATE src/2g4_crypto.c)
+endif()
 target_sources_ifdef(CONFIG_ZMK_RGB_UNDERGLOW app PRIVATE src/rgb_underglow.c)
 target_sources_ifdef(CONFIG_ZMK_RGB_UNDERGLOW app PRIVATE src/rgb_underglow_layer.c)
 target_sources_ifdef(CONFIG_ZMK_BACKLIGHT app PRIVATE src/backlight.c)
@@ -135,13 +140,13 @@ if (CONFIG_ZMK_STUDIO_RPC)
   set(NANOPB_GENERATE_CPP_STANDALONE OFF)
 
   nanopb_generate_cpp(proto_srcs proto_hdrs RELPATH ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}
+                        ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/combos.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/studio.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/meta.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/core.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/behaviors.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/keymap.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/lighting.proto
-                        ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/combos.proto
                         ${ZEPHYR_ZMK_STUDIO_MESSAGES_MODULE_DIR}/proto/zmk/motion.proto
   )
 

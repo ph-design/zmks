@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Team PHDesign
+# SPDX-License-Identifier: MIT
+
+mainmenu "ESB Test"
+
+source "Kconfig.zephyr"
+
+choice ESB_TEST_ROLE
+	prompt "Test role"
+	default ESB_TEST_ROLE_PTX
+
+config ESB_TEST_ROLE_PTX
+	bool "PTX (transmitter)"
+
+config ESB_TEST_ROLE_PRX
+	bool "PRX (receiver)"
+
+endchoice
