@@ -470,6 +470,26 @@ int lis2dh_init_chip(const struct device *dev) {
     return lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CTRL1, lis2dh->reg_ctrl1_active_val);
 }
 
+static bool lis2dh_device_is_suspended(const struct device *dev) {
+    enum pm_device_state state;
+    return pm_device_state_get(dev, &state) == 0 && state == PM_DEVICE_STATE_SUSPENDED;
+}
+
+static bool lis2dh_bus_is_suspended(const struct device *dev) {
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c)
+    const struct lis2dh_config *cfg = dev->config;
+    if (cfg->bus_init != lis2dh_i2c_init) {
+        return false;
+    }
+
+    enum pm_device_state state;
+    return pm_device_state_get(cfg->bus_cfg.i2c.bus, &state) == 0 &&
+           state == PM_DEVICE_STATE_SUSPENDED;
+#else
+    return false;
+#endif
+}
+
 static int lis2dh_pm_action(const struct device *dev, enum pm_device_action action) {
     int status = 0;
     struct lis2dh_data *lis2dh = dev->data;
@@ -480,6 +500,14 @@ static int lis2dh_pm_action(const struct device *dev, enum pm_device_action acti
         status = lis2dh_init_chip(dev);
         break;
     case PM_DEVICE_ACTION_RESUME:
+        if (!lis2dh_device_is_suspended(dev)) {
+            return 0;
+        }
+        if (lis2dh_bus_is_suspended(dev)) {
+            LOG_ERR("cannot resume LIS2DH while its bus is suspended");
+            return -EIO;
+        }
+
         /* read REFERENCE register (see datasheet rev 6 section 8.9 footnote 1) */
         status = lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_REFERENCE, &regdata);
         if (status < 0) {
@@ -495,12 +523,14 @@ static int lis2dh_pm_action(const struct device *dev, enum pm_device_action acti
         }
         break;
     case PM_DEVICE_ACTION_SUSPEND:
-        /* Store current mode, suspend. */
-        status = lis2dh->hw_tf->read_reg(dev, LIS2DH_REG_CTRL1, &lis2dh->reg_ctrl1_active_val);
-        if (status < 0) {
-            LOG_ERR("failed to read reg_ctrl1");
-            return status;
+        if (lis2dh_device_is_suspended(dev)) {
+            return 0;
         }
+        if (lis2dh_bus_is_suspended(dev)) {
+            LOG_WRN("I2C bus already suspended, skipping LIS2DH suspend write");
+            return 0;
+        }
+
         status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CTRL1, LIS2DH_SUSPEND);
         if (status < 0) {
             LOG_ERR("failed to write reg_ctrl1");
