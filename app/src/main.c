@@ -20,6 +20,10 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+#if IS_ENABLED(CONFIG_ZMK_STUDIO)
+#include <zmk/combos.h>
+#endif
+
 #if IS_ENABLED(CONFIG_ZMK_DISPLAY)
 
 #include <zmk/display.h>
@@ -37,6 +41,9 @@ int main(void) {
 #if IS_ENABLED(CONFIG_SETTINGS)
     settings_subsys_init();
     settings_load();
+#if IS_ENABLED(CONFIG_ZMK_STUDIO)
+    zmk_combo_finalize_settings();
+#endif
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
     zmk_rgb_underglow_apply_state();
 #endif

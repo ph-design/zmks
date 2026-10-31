@@ -835,7 +835,7 @@ int zmk_combo_reload_from_settings(void) {
     }
 
     int rc = settings_load_subtree("combo/cfg");
-    combo_cfg_dirty = true;
+    zmk_combo_finalize_settings();
     return rc;
 }
 
@@ -845,30 +845,32 @@ static void combo_apply_blob(uint16_t index, const struct combo_settings_blob *b
         return;
     }
 
-    struct combo_override *ov = &combo_overrides[index];
-    ov->present = true;
-    ov->cfg = (struct zmk_combo_pub_config){
-        .timeout_ms = blob->timeout_ms,
-        .require_prior_idle_ms = blob->require_prior_idle_ms,
-        .layer_mask = blob->layer_mask,
-        .slow_release = blob->slow_release != 0,
+    struct combo_override next = {
+        .present = true,
+        .cfg =
+            {
+                .timeout_ms = blob->timeout_ms,
+                .require_prior_idle_ms = blob->require_prior_idle_ms,
+                .layer_mask = blob->layer_mask,
+                .slow_release = blob->slow_release != 0,
+            },
     };
 
     if (blob->version < 2) {
+        combo_overrides[index] = next;
         return;
     }
 
     if (blob->key_position_len > MAX_COMBO_KEYS) {
-        LOG_WRN("Discarding combo/cfg/%u with %d keys > max %d", index,
-                blob->key_position_len, MAX_COMBO_KEYS);
+        LOG_WRN("Discarding combo/cfg/%u with %d keys > max %d", index, blob->key_position_len,
+                MAX_COMBO_KEYS);
         return;
     }
 
-    const char *behavior_name =
-        zmk_behavior_find_behavior_name_from_local_id(blob->behavior_local_id);
-    if (!behavior_name) {
-        LOG_WRN("Discarding combo/cfg/%u with unknown behavior local_id %u", index,
-                blob->behavior_local_id);
+    if (blob->key_position_len == 0) {
+        next.positions_present = true;
+        combo_overrides[index] = next;
+        combo_cfg_dirty = true;
         return;
     }
 
@@ -880,17 +882,40 @@ static void combo_apply_blob(uint16_t index, const struct combo_settings_blob *b
         }
     }
 
-    ov->key_position_len = blob->key_position_len;
+    next.key_position_len = blob->key_position_len;
     for (uint8_t p = 0; p < blob->key_position_len; p++) {
-        ov->key_positions[p] = blob->key_positions[p];
+        next.key_positions[p] = blob->key_positions[p];
     }
-    ov->behavior = (struct zmk_behavior_binding){
-        .behavior_dev = behavior_name,
+    next.behavior = (struct zmk_behavior_binding){
         .local_id = blob->behavior_local_id,
         .param1 = blob->param1,
         .param2 = blob->param2,
     };
-    ov->positions_present = true;
+    next.positions_present = true;
+    combo_overrides[index] = next;
+    combo_cfg_dirty = true;
+}
+
+void zmk_combo_finalize_settings(void) {
+    for (uint16_t i = 0; i < ARRAY_SIZE(combos); i++) {
+        struct combo_override *ov = &combo_overrides[i];
+        if (!ov->present || !ov->positions_present || ov->key_position_len == 0 ||
+            ov->behavior.behavior_dev) {
+            continue;
+        }
+
+        const char *behavior_name =
+            zmk_behavior_find_behavior_name_from_local_id(ov->behavior.local_id);
+        if (!behavior_name) {
+            LOG_WRN("Discarding combo/cfg/%u with unknown behavior local_id %u", i,
+                    ov->behavior.local_id);
+            combo_clear_override(i);
+            continue;
+        }
+
+        ov->behavior.behavior_dev = behavior_name;
+    }
+
     combo_cfg_dirty = true;
 }
 
@@ -941,4 +966,5 @@ size_t zmk_combo_get_key_positions_at_idx(uint16_t index, const int32_t **positi
 int zmk_combo_save_all(void) { return 0; }
 int zmk_combo_settings_reset(void) { return 0; }
 int zmk_combo_reload_from_settings(void) { return 0; }
+void zmk_combo_finalize_settings(void) {}
 #endif
