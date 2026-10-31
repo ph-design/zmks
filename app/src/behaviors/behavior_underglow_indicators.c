@@ -79,6 +79,10 @@ static struct connection_indicator_state conn_state = {
 static uint8_t conn_key_position = 0;
 static bool conn_key_position_set = false;
 
+static inline uint32_t underglow_indicator_color(uint32_t color) {
+    return color == 0 ? 0 : color | 0x01000000;
+}
+
 static int underglow_indicators_init(const struct device *dev) { return 0; };
 
 static int underglow_indicators_process(struct zmk_behavior_binding *binding,
@@ -109,9 +113,9 @@ static int underglow_indicators_process(struct zmk_behavior_binding *binding,
             return 0;
         }
         if (data->indicators & BIT(config->indicator)) {
-            return caps_override.on_color | 0x01000000;
+            return underglow_indicator_color(caps_override.on_color);
         } else {
-            return caps_override.off_color | 0x01000000;
+            return underglow_indicator_color(caps_override.off_color);
         }
     }
 
@@ -123,20 +127,20 @@ static int underglow_indicators_process(struct zmk_behavior_binding *binding,
             return 0;
         }
         struct zmk_endpoint_instance ep = zmk_endpoints_selected();
-        return (ep.transport == ZMK_TRANSPORT_USB) ? (conn_state.usb_color | 0x01000000)
-                                                   : (conn_state.bt_color | 0x01000000);
+        return (ep.transport == ZMK_TRANSPORT_USB) ? underglow_indicator_color(conn_state.usb_color)
+                                                   : underglow_indicator_color(conn_state.bt_color);
     }
 
     if (config->indicator == CONNECTION) {
         struct zmk_endpoint_instance ep = zmk_endpoints_selected();
-        return (ep.transport == ZMK_TRANSPORT_USB) ? (binding->param1 | 0x01000000)
-                                                   : (binding->param2 | 0x01000000);
+        return (ep.transport == ZMK_TRANSPORT_USB) ? underglow_indicator_color(binding->param1)
+                                                   : underglow_indicator_color(binding->param2);
     }
 
     if (data->indicators & BIT(config->indicator))
-        return binding->param2;
+        return underglow_indicator_color(binding->param2);
     else
-        return binding->param1;
+        return underglow_indicator_color(binding->param1);
 }
 
 static const struct behavior_driver_api underglow_indicators_driver_api = {
@@ -173,7 +177,10 @@ int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_
     *enabled = caps_override.has_override ? caps_override.enabled : true;
     *off_color = caps_override.has_override ? caps_override.off_color : 0;
     *on_color = caps_override.has_override ? caps_override.on_color : 0;
-    *key_pos = caps_override.has_pos ? caps_override.key_pos : capslock_key_position;
+    *key_pos = caps_override.has_pos
+                   ? caps_override.key_pos
+                   : (capslock_key_position_set ? capslock_key_position
+                                                : ZMK_STATUS_INDICATOR_POSITION_UNSET);
     *layer_id = caps_override.layer_id;
     return 0;
 }
@@ -237,7 +244,9 @@ int zmk_connection_indicator_get_state(bool *enabled, uint32_t *usb_color, uint3
     *enabled = conn_state.has_override ? conn_state.enabled : conn_key_position_set;
     *usb_color = conn_state.has_override ? conn_state.usb_color : 0xFFFFFF;
     *bt_color = conn_state.has_override ? conn_state.bt_color : 0x0000FF;
-    *key_pos = conn_state.has_pos ? conn_state.key_pos : conn_key_position;
+    *key_pos = conn_state.has_pos ? conn_state.key_pos
+                                  : (conn_key_position_set ? conn_key_position
+                                                           : ZMK_STATUS_INDICATOR_POSITION_UNSET);
     *layer_id = conn_state.layer_id;
     return 0;
 }
@@ -280,7 +289,7 @@ int zmk_connection_indicator_set_layer_id(uint8_t layer_id) {
 
 bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
                                       uint32_t *out_color) {
-    if (!conn_state.has_pos) {
+    if (!conn_state.has_pos && !conn_key_position_set) {
         return false;
     }
     if (!conn_state.enabled) {
@@ -292,7 +301,7 @@ bool zmk_connection_indicator_resolve(uint8_t top_layer, uint8_t *out_key_pos,
     }
 
     struct zmk_endpoint_instance ep = zmk_endpoints_selected();
-    *out_key_pos = conn_state.key_pos;
+    *out_key_pos = conn_state.has_pos ? conn_state.key_pos : conn_key_position;
     *out_color = (ep.transport == ZMK_TRANSPORT_USB) ? conn_state.usb_color : conn_state.bt_color;
     return true;
 }

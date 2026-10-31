@@ -53,3 +53,5 @@ int zmk_combo_save_all(void);
 int zmk_combo_settings_reset(void);
 
 int zmk_combo_reload_from_settings(void);
+
+void zmk_combo_finalize_settings(void);

@@ -48,6 +48,7 @@ bool zmk_rgb_layer_is_enabled(void);
 int zmk_rgb_layer_set_enabled(bool enabled);
 
 #define ZMK_STATUS_INDICATOR_ANY_LAYER 0xFF
+#define ZMK_STATUS_INDICATOR_POSITION_UNSET 0xFF
 
 int zmk_capslock_indicator_get_state(bool *enabled, uint32_t *off_color, uint32_t *on_color,
                                      uint8_t *key_pos, uint8_t *layer_id);

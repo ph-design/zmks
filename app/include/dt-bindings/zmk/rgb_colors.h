@@ -15,4 +15,4 @@
 #define PINK 0xffc0cb
 #define WHITE 0xffffff
 #define ___ 0x000000
-#define BLACK 0x000000
+#define BLACK 0x01000000
