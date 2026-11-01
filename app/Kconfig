@@ -10,6 +10,26 @@ menu "Basic Keyboard Setup"
 config ZMK_KEYBOARD_NAME
     string "Keyboard Name"
 
+config ZMK_DEVICE_MODEL
+    string "Device Model"
+    default ZMK_KEYBOARD_NAME
+    help
+      Marketing model reported to ZMK Studio's device info panel. Defaults to the
+      keyboard name so old configs keep working.
+
+config ZMK_DEVICE_MANUFACTURER
+    string "Device Manufacturer"
+    default ""
+    help
+      Manufacturer/brand reported to ZMK Studio. Empty means "not declared" and
+      the app shows a dash.
+
+config ZMK_DEVICE_FAMILY
+    string "Device Family"
+    default ""
+    help
+      Product family reported to ZMK Studio, e.g. "PH60".
+
 config USB_DEVICE_PRODUCT
     default ZMK_KEYBOARD_NAME
 

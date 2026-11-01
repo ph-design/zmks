@@ -279,7 +279,8 @@ static uint8_t split_central_sensor_notify_func(struct bt_conn *conn,
 
     LOG_DBG("[SENSOR NOTIFICATION] data %p length %u", data, length);
 
-    if (length < offsetof(struct sensor_event, channel_data)) {
+    if (length < offsetof(struct sensor_event, channel_data) +
+                       sizeof(struct zmk_sensor_channel_data)) {
         LOG_WRN("Ignoring sensor notify with insufficient data length (%d)", length);
         return BT_GATT_ITER_STOP;
     }
@@ -363,6 +364,11 @@ static uint8_t split_central_notify_func(struct bt_conn *conn,
     if (!data) {
         LOG_DBG("[UNSUBSCRIBED]");
         params->value_handle = 0U;
+        return BT_GATT_ITER_STOP;
+    }
+
+    if (length < POSITION_STATE_DATA_LEN) {
+        LOG_WRN("Ignoring position notify with insufficient data length (%d)", length);
         return BT_GATT_ITER_STOP;
     }
 

@@ -72,11 +72,6 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
     }
 
     rx_total++;
-    if (!kb_connected) {
-        kb_connected = true;
-        LOG_INF("2.4G keyboard connected (rf_len=%u, total=%u)", rx->length, rx_total);
-    }
-    k_work_reschedule(&kb_lost_work, K_MSEC(ZMK_2G4_KB_TIMEOUT_MS));
 
     uint8_t buf[CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH];
     memcpy(buf, rx->data, rx->length);
@@ -89,12 +84,22 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         return;
     }
 
+    if (!kb_connected) {
+        kb_connected = true;
+        LOG_INF("2.4G keyboard connected (rf_len=%u, total=%u)", rx->length, rx_total);
+    }
+    k_work_reschedule(&kb_lost_work, K_MSEC(ZMK_2G4_KB_TIMEOUT_MS));
+
     bool usb_suspended = (zmk_usb_get_status() == USB_DC_SUSPEND);
 
     switch (buf[0]) {
     case ZMK_2G4_MSG_KEYBOARD_REPORT: {
         struct zmk_hid_keyboard_report *report = zmk_hid_get_keyboard_report();
-        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        if (dec_len != 1 + sizeof(report->body)) {
+            LOG_WRN("Invalid keyboard report length: %d", dec_len - 1);
+            break;
+        }
+        size_t body_len = sizeof(report->body);
         memcpy(&report->body, &buf[1], body_len);
         if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;
@@ -107,7 +112,11 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
     }
     case ZMK_2G4_MSG_CONSUMER_REPORT: {
         struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
-        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        if (dec_len != 1 + sizeof(report->body)) {
+            LOG_WRN("Invalid consumer report length: %d", dec_len - 1);
+            break;
+        }
+        size_t body_len = sizeof(report->body);
         memcpy(&report->body, &buf[1], body_len);
         if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;
@@ -121,7 +130,11 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
     case ZMK_2G4_MSG_MOUSE_REPORT: {
         struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
-        size_t body_len = MIN(dec_len - 1, sizeof(report->body));
+        if (dec_len != 1 + sizeof(report->body)) {
+            LOG_WRN("Invalid mouse report length: %d", dec_len - 1);
+            break;
+        }
+        size_t body_len = sizeof(report->body);
         memcpy(&report->body, &buf[1], body_len);
         if (usb_suspended && report_is_release(&buf[1], body_len)) {
             break;

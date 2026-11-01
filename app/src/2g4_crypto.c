@@ -52,6 +52,13 @@ static uint32_t rx_counter;
 static uint64_t rx_window;
 static bool rx_session_init;
 
+static void reset_rx_replay_state(void) {
+    rx_session_id = 0;
+    rx_counter = 0;
+    rx_window = 0;
+    rx_session_init = false;
+}
+
 static struct k_spinlock ccm_lock;
 
 struct ccm_cnf {
@@ -307,6 +314,7 @@ int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
     memcpy(aes_key, key, AES_KEY_SIZE);
     key_valid = true;
     using_paired = true;
+    reset_rx_replay_state();
     return 0;
 }
 
@@ -322,6 +330,7 @@ int zmk_2g4_crypto_clear_paired_key(void) {
     } else {
         key_valid = false;
     }
+    reset_rx_replay_state();
     return 0;
 }
 
@@ -332,6 +341,7 @@ int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
     }
     memcpy(&paired_addr, addr, sizeof(paired_addr));
     addr_paired = true;
+    reset_rx_replay_state();
     return 0;
 }
 
@@ -341,6 +351,7 @@ int zmk_2g4_addr_clear_paired(void) {
         return ret;
     }
     addr_paired = false;
+    reset_rx_replay_state();
     return 0;
 }
 #else
@@ -359,6 +370,33 @@ int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
 int zmk_2g4_addr_clear_paired(void) { return -ENOTSUP; }
 #endif
 
+static uint32_t reserved_session_id;
+
+int zmk_2g4_crypto_reserve_session_id(void) {
+    if (session_started) {
+        return 0;
+    }
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    uint32_t next = tx_epoch + 1;
+    if (next == 0) {
+        next = 1;
+    }
+
+    // Flash writes need the BLE ticker while dual-radio mode is using it.
+    int ret = settings_save_one("2g4/tx_epoch", &next, sizeof(next));
+    if (ret) {
+        LOG_ERR("2.4G tx_epoch persist failed: %d", ret);
+        return ret;
+    }
+
+    tx_epoch = next;
+    reserved_session_id = next;
+#endif
+
+    return 0;
+}
+
 void zmk_2g4_crypto_session_start(void) {
     if (session_started) {
         return;
@@ -366,15 +404,12 @@ void zmk_2g4_crypto_session_start(void) {
     session_started = true;
 
 #if IS_ENABLED(CONFIG_SETTINGS)
-    tx_session_id = tx_epoch + 1;
+    // Never write flash here: this runs with the BLE controller already disabled.
+    tx_session_id = reserved_session_id ? reserved_session_id : (tx_epoch + 1);
     if (tx_session_id == 0) {
         tx_session_id = 1;
     }
-    tx_epoch = tx_session_id;
-    int ret = settings_save_one("2g4/tx_epoch", &tx_session_id, sizeof(tx_session_id));
-    if (ret) {
-        LOG_ERR("2.4G tx_epoch persist failed: %d", ret);
-    }
+    reserved_session_id = 0;
 #else
     do {
         tx_session_id = sys_rand32_get();

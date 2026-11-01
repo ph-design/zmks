@@ -18,6 +18,7 @@
 #endif
 #if IS_ENABLED(CONFIG_ZMK_2G4)
 #include <zmk/2g4.h>
+#include <zmk/2g4_crypto.h>
 #endif
 #include <zmk/endpoints.h>
 #include <zmk/hid.h>
@@ -82,6 +83,17 @@ static int endpoints_save_preferred(void) {
 }
 #else
 static int endpoints_save_preferred(void) { return 0; }
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
+static int endpoints_save_preferred_now(enum zmk_transport transport) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    return settings_save_one("endpoints/preferred", &transport, sizeof(transport));
+#else
+    ARG_UNUSED(transport);
+    return 0;
+#endif
+}
 #endif
 
 bool zmk_endpoint_instance_eq(struct zmk_endpoint_instance a, struct zmk_endpoint_instance b) {
@@ -165,15 +177,28 @@ static bool is_valid_transport(enum zmk_transport transport) {
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
 
-#define RADIO_SWITCH_WATCHDOG_MS 1000
+#define RADIO_SWITCH_WATCHDOG_MS 3000
+
+static void radio_switch_watchdog_recover(struct k_work *work) {
+    if (zmk_2g4_is_ready()) {
+        LOG_WRN("Radio switch watchdog expired but 2.4G is up; clearing the in-flight flag");
+        radio_switching = false;
+        update_current_endpoint();
+        return;
+    }
+
+    LOG_PANIC();
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+static K_WORK_DEFINE(radio_switch_watchdog_work, radio_switch_watchdog_recover);
 
 static void radio_switch_watchdog_expired(struct k_timer *timer) {
     if (!radio_switching) {
         return;
     }
     LOG_ERR("Radio switch watchdog expired (>%dms), rebooting", RADIO_SWITCH_WATCHDOG_MS);
-    LOG_PANIC();
-    sys_reboot(SYS_REBOOT_COLD);
+    k_work_submit(&radio_switch_watchdog_work);
 }
 
 static K_TIMER_DEFINE(radio_switch_watchdog, radio_switch_watchdog_expired, NULL);
@@ -184,10 +209,26 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
     }
 
     radio_switching = true;
+    if (new_transport == ZMK_TRANSPORT_2G4) {
+        // Flash can wait for a BLE timeslice, so arm the watchdog after this step.
+        int ret = zmk_2g4_crypto_reserve_session_id();
+        if (ret) {
+            radio_switching = false;
+            return ret;
+        }
+    }
+
     k_timer_start(&radio_switch_watchdog, K_MSEC(RADIO_SWITCH_WATCHDOG_MS), K_NO_WAIT);
     int ret = 0;
 
     if (new_transport == ZMK_TRANSPORT_2G4) {
+        for (int i = 0; i < ZMK_BLE_PROFILE_COUNT; i++) {
+            if (zmk_ble_profile_is_connected((uint8_t)i)) {
+                LOG_INF("Disconnecting BLE profile %d before the 2.4G switch", i);
+                zmk_ble_prof_disconnect((uint8_t)i);
+            }
+        }
+        k_msleep(RADIO_SWITCH_SETTLE_MS);
         ret = zmk_ble_stop();
         if (ret) {
             LOG_ERR("BLE stop failed: %d", ret);
@@ -197,6 +238,7 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
         ret = zmk_2g4_start();
         if (ret) {
             LOG_ERR("2.4G start failed: %d", ret);
+            zmk_ble_start();
             goto done;
         }
     } else if (new_transport == ZMK_TRANSPORT_BLE) {
@@ -251,14 +293,30 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
     if (is_wireless_transport(transport)) {
         enum zmk_transport previous_transport = preferred_wireless_transport;
+        bool transport_changed = previous_transport != transport;
 
         manual_wireless_transport_selected = true;
+
+        // BLE -> 2G4 must persist before bt_disable; 2G4 -> BLE persists after bt_enable.
+        if (transport_changed && transport == ZMK_TRANSPORT_2G4) {
+            int ret = endpoints_save_preferred_now(transport);
+            if (ret) {
+                return ret;
+            }
+        }
+
         int ret = apply_wireless_transport(transport);
         if (ret) {
+            if (transport_changed && transport == ZMK_TRANSPORT_2G4) {
+                int save_ret = endpoints_save_preferred_now(previous_transport);
+                if (save_ret) {
+                    LOG_ERR("Failed to restore preferred transport: %d", save_ret);
+                }
+            }
             return ret;
         }
 
-        if (previous_transport != preferred_wireless_transport) {
+        if (transport_changed && transport == ZMK_TRANSPORT_BLE) {
             endpoints_save_preferred();
         }
 
@@ -599,7 +657,6 @@ static struct zmk_endpoint_instance get_selected_instance(void) {
 #endif // IS_ENABLED(CONFIG_ZMK_BLE)
 
     default:
-        // No extra data for this transport.
         break;
     }
 
@@ -632,6 +689,10 @@ int zmk_endpoints_apply_preferred_transport(void) {
     }
 
     return apply_wireless_transport(preferred_wireless_transport);
+}
+
+enum zmk_transport zmk_endpoints_preferred_wireless_transport(void) {
+    return preferred_wireless_transport;
 }
 #endif
 

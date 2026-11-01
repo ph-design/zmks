@@ -8,7 +8,6 @@
 #include <zephyr/init.h>
 
 #include <errno.h>
-#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -21,12 +20,6 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci_types.h>
-
-#if IS_ENABLED(CONFIG_SETTINGS)
-
-#include <zephyr/settings/settings.h>
-
-#endif
 
 #include <zephyr/logging/log.h>
 
@@ -110,6 +103,8 @@ bool zmk_ble_profile_is_open(uint8_t index) {
     }
     return !bt_addr_le_cmp(&profiles[index].peer, BT_ADDR_LE_ANY);
 }
+
+bool zmk_ble_is_advertising(void) { return ble_started && advertising_status != ZMK_ADV_NONE; }
 
 void set_profile_address(uint8_t index, const bt_addr_le_t *addr) {
     char setting_name[17];
@@ -707,19 +702,24 @@ int zmk_ble_stop(void) {
         return 0;
     }
 
-    ble_started = false;
-
     k_work_cancel(&update_advertising_work);
 
     bt_le_adv_stop();
     advertising_status = ZMK_ADV_NONE;
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
+    // Propagate failure so ESB never starts with the BLE controller active.
     int ret = bt_disable();
     if (ret) {
         LOG_ERR("bt_disable failed: %d", ret);
+        // Keep BLE marked started so a later attempt can retry.
+        advertising_status = ZMK_ADV_NONE;
+        update_advertising();
+        return ret;
     }
 #endif
+
+    ble_started = false;
 
     LOG_INF("BLE stopped");
     return 0;
@@ -758,8 +758,6 @@ static int zmk_ble_complete_startup(void) {
         }
     }
 
-    // Hardcoding a reasonable hardcoded value of peripheral addresses
-    // to clear so we properly clear a split central as well.
     for (int i = 0; i < 8; i++) {
         char setting_name[32];
         sprintf(setting_name, "ble/peripheral_addresses/%d", i);

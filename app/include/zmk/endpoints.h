@@ -73,6 +73,7 @@ int zmk_endpoints_toggle_transport(void);
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
 int zmk_endpoints_apply_preferred_transport(void);
+enum zmk_transport zmk_endpoints_preferred_wireless_transport(void);
 #endif
 
 /**

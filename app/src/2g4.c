@@ -41,6 +41,11 @@ static void keepalive_handler(struct k_work *work) {
         return;
     }
 
+    if (consec_fail_count >= CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES) {
+        k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
+        return;
+    }
+
     tx_payload.pipe = 0;
     tx_payload.noack = false;
     tx_payload.data[0] = ZMK_2G4_MSG_KEEP_ALIVE;
@@ -48,6 +53,7 @@ static void keepalive_handler(struct k_work *work) {
     int enc_len =
         zmk_2g4_crypto_encrypt(tx_payload.data, 1, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
     if (enc_len < 0) {
+        k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
         return;
     }
     tx_payload.length = enc_len;
@@ -73,17 +79,6 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
         while (zmk_esb_read_rx_payload(&rx) == 0) {
-            if (rx.length < 1) {
-                continue;
-            }
-            switch (rx.data[0]) {
-            case ZMK_2G4_ACK_LED_INDICATORS:
-                break;
-            case ZMK_2G4_ACK_HOST_CONNECTED:
-                break;
-            default:
-                break;
-            }
         }
         break;
     }
@@ -94,8 +89,6 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
     if (!ready) {
         return -ENODEV;
     }
-
-    consec_fail_count = 0;
 
     tx_payload.pipe = 0;
     tx_payload.noack = false;
@@ -116,7 +109,6 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
         ret = zmk_esb_write_payload(&tx_payload);
     }
 
-    /* Push keepalive deadline forward on every report */
     k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
 
     return ret;
@@ -211,7 +203,6 @@ int zmk_2g4_start(void) {
     zmk_2g4_crypto_session_start();
     send_boot_announcement();
 
-    /* Start periodic keepalive to prevent dongle timeout */
     k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
 
     return 0;

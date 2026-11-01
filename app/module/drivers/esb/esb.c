@@ -814,7 +814,10 @@ int zmk_esb_read_rx_payload(struct zmk_esb_payload *payload) {
     if (!payload) {
         return -EINVAL;
     }
+
+    unsigned int key = irq_lock();
     if (atomic_get(&rx_count) == 0) {
+        irq_unlock(key);
         return -ENODATA;
     }
 
@@ -824,6 +827,7 @@ int zmk_esb_read_rx_payload(struct zmk_esb_payload *payload) {
         rx_front = 0;
     }
     atomic_dec(&rx_count);
+    irq_unlock(key);
 
     return 0;
 }
@@ -873,8 +877,21 @@ int zmk_esb_flush_tx(void) {
     if (esb_state == STATE_UNINIT) {
         return -EACCES;
     }
-    tx_fifo_reset();
+
+    unsigned int key = irq_lock();
+    if (esb_cfg.mode == ZMK_ESB_MODE_PTX && esb_state != STATE_IDLE && current_payload &&
+        atomic_get(&tx_count) > 0) {
+        // Keep the in-flight packet; only discard packets waiting behind it.
+        tx_back = tx_front + 1;
+        if (tx_back >= CONFIG_ZMK_ESB_TX_FIFO_SIZE) {
+            tx_back = 0;
+        }
+        atomic_set(&tx_count, 1);
+    } else {
+        tx_fifo_reset();
+    }
     memset(ack_pl_pending, 0, sizeof(ack_pl_pending));
+    irq_unlock(key);
     return 0;
 }
 
@@ -882,8 +899,10 @@ int zmk_esb_flush_rx(void) {
     if (esb_state == STATE_UNINIT) {
         return -EACCES;
     }
+    unsigned int key = irq_lock();
     rx_fifo_reset();
     memset(rx_pipe_info, 0, sizeof(rx_pipe_info));
+    irq_unlock(key);
     return 0;
 }
 

@@ -35,6 +35,7 @@ struct bt_conn *zmk_ble_active_profile_conn(void);
 
 bool zmk_ble_profile_is_connected(uint8_t index);
 bool zmk_ble_profile_is_open(uint8_t index);
+bool zmk_ble_is_advertising(void);
 
 bool zmk_ble_active_profile_is_open(void);
 bool zmk_ble_active_profile_is_connected(void);
