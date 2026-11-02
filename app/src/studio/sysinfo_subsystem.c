@@ -47,6 +47,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 extern char _flash_used[];
 extern char _image_ram_size[];
 
+#if defined(CONFIG_SOC)
+#define MCU_NAME CONFIG_SOC
+#elif defined(CONFIG_SOC_PART_NUMBER)
+#define MCU_NAME CONFIG_SOC_PART_NUMBER
+#else
+#define MCU_NAME CONFIG_BOARD
+#endif
+
 ZMK_RPC_SUBSYSTEM(sysinfo)
 
 #define SYSINFO_RESPONSE(type, ...) ZMK_RPC_RESPONSE(sysinfo, type, __VA_ARGS__)
@@ -179,7 +187,7 @@ static zmk_studio_Response get_hardware(const zmk_studio_Request *req) {
     LOG_DBG("");
     zmk_sysinfo_HardwareInfo resp = zmk_sysinfo_HardwareInfo_init_zero;
 
-    copy_str(resp.mcu, sizeof(resp.mcu), CONFIG_SOC);
+    copy_str(resp.mcu, sizeof(resp.mcu), MCU_NAME);
 
     // Flash and RAM sizes are already expressed in KiB.
 #ifdef CONFIG_FLASH_SIZE
