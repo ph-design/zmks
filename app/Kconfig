@@ -591,6 +591,12 @@ if ZMK_MOTION
 config ZMK_MOTION_TAP_SIDE_INVERT
     bool "Invert case tap left/right side detection"
 
+config ZMK_MOTION_IMU_FLIP_Z
+    bool "Invert IMU Z axis for back-side mounting"
+    help
+      Enable when the IMU is mounted on the back of the PCB, reversing the
+      flat-up and flat-down orientation without changing motion magnitude.
+
 endif # ZMK_MOTION
 
 config ZMK_EXT_POWER

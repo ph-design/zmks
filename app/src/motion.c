@@ -59,6 +59,9 @@ enum motion_orientation {
 // pose from the gravity vector: Z-dominant means flat; a weak Z is free fall
 // or no gravity sample yet
 static int orientation_from_ums2(int64_t x, int64_t y, int64_t z) {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_IMU_FLIP_Z)
+    z = -z;
+#endif
     int64_t ax = x < 0 ? -x : x;
     int64_t ay = y < 0 ? -y : y;
     int64_t az = z < 0 ? -z : z;
@@ -697,6 +700,21 @@ int zmk_motion_settings_reset(void) {
     int rc2 = settings_delete("motion/carry");
     int rc3 = settings_delete("motion/still");
     int rc4 = settings_delete("motion/slpwk");
+    int first_err = 0;
+
+    if (rc < 0 && rc != -ENOENT) {
+        first_err = rc;
+    }
+    if (rc2 < 0 && rc2 != -ENOENT && first_err == 0) {
+        first_err = rc2;
+    }
+    if (rc3 < 0 && rc3 != -ENOENT && first_err == 0) {
+        first_err = rc3;
+    }
+    if (rc4 < 0 && rc4 != -ENOENT && first_err == 0) {
+        first_err = rc4;
+    }
+
     tap_defaults();
     carry_defaults();
     still_wake_defaults();
@@ -705,7 +723,7 @@ int zmk_motion_settings_reset(void) {
     apply_tap_triggers();
     apply_carry_hw();
     apply_sleep_wake_hw();
-    return rc < 0 ? rc : (rc2 < 0 ? rc2 : (rc3 < 0 ? rc3 : rc4));
+    return first_err;
 }
 
 static int motion_settings_load(const char *name, size_t len, settings_read_cb read_cb,
