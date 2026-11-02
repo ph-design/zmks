@@ -175,33 +175,9 @@ static zmk_studio_Response clear_pairing(const zmk_studio_Request *req) {
     return PAIRING_RESPONSE(clear_pairing, resp);
 }
 
-static zmk_studio_Response set_channel(const zmk_studio_Request *req) {
-    uint32_t channel = req->subsystem.pairing.request_type.set_channel.channel;
-    if (channel > 100 || pairing_channel_reserved(channel)) {
-        return ZMK_RPC_SIMPLE_ERR(GENERIC);
-    }
-
-    struct zmk_2g4_addr addr;
-    zmk_2g4_addr_get(&addr);
-    addr.rf_channel = (uint8_t)channel;
-
-    int err = zmk_2g4_addr_set_paired(&addr);
-    if (err) {
-        LOG_ERR("Failed to store 2.4G channel: %d", err);
-        return ZMK_RPC_SIMPLE_ERR(GENERIC);
-    }
-
-    pairing_restart_radio();
-
-    zmk_pairing_SetChannelResponse resp = zmk_pairing_SetChannelResponse_init_zero;
-    resp.channel = channel;
-    return PAIRING_RESPONSE(set_channel, resp);
-}
-
 ZMK_RPC_SUBSYSTEM_HANDLER(pairing, get_pair_state, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(pairing, generate_and_pair, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(pairing, clear_pairing, ZMK_STUDIO_RPC_HANDLER_SECURED);
-ZMK_RPC_SUBSYSTEM_HANDLER(pairing, set_channel, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
 #else
 
