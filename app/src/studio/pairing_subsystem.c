@@ -105,12 +105,6 @@ static void pairing_restart_radio(void) {
 static zmk_studio_Response generate_and_pair(const zmk_studio_Request *req) {
     LOG_DBG("");
 
-    // Return the key only over the wired RPC link.
-    if (zmk_endpoints_selected().transport != ZMK_TRANSPORT_USB) {
-        LOG_WRN("Refusing to generate a 2.4G key off the USB endpoint");
-        return ZMK_RPC_SIMPLE_ERR(GENERIC);
-    }
-
     uint8_t key[PAIRING_KEY_LEN];
     struct zmk_2g4_addr addr;
 
