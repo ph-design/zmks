@@ -84,6 +84,8 @@ jobs:
                 console.log(output.toString());
               } catch (e) {
                 console.error(`::error::Failed to build ${{ matrix.board }} ${shieldArgs.shield} ${shieldArgs['cmake-args']}`);
+                if (e.stdout) console.error(e.stdout.toString());
+                if (e.stderr) console.error(e.stderr.toString());
                 console.error(e);
                 error = true;
               } finally {
