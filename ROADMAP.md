@@ -1,0 +1,24 @@
+# ZMKs TODO
+
+- [X]  Studio configuration for keymaps, layers, and predefined physical layouts.
+- [X]  Runtime editing and saving of Hold-tap timing and decision strategies.
+- [X]  Editing, saving, and disabling existing Combo slots.
+- [X]  USB / BLE / 2.4GHz output switching, pairing management, and ESB keyboard- and receiver-side firmware.
+- [X]  Position-based RGB effects, reactive effects, and typing heatmap.
+- [X]  Layer, Caps Lock, and connection status lighting indicators.
+- [X]  Case-tap actions, carry sleep, and wake settings on compatible sensors.
+- [X]  ZMK v0.3 configuration migration guide.
+- [ ]  Consistent settings save, discard, and error recovery.
+- [ ]  Physical key and matrix diagnostics.
+- [ ]  Firmware OTA.
+- [ ]  Follow upstream (HWMv2 / Zephyr 4.1+).
+- [ ]  Capacity management for Combo and behavior slots.
+- [ ]  Configuration export, import, and version migration.
+- [ ]  Dynamic macro editing.
+- [ ]  Visual Tap Dance configuration.
+- [ ]  Broader undo / redo coverage, on top of the unified save model.
+- [ ]  Encoder, mouse key, and pointing device parameter configuration.
+- [ ]  Power, debounce, and report parameter configuration.
+- [ ]  Multiple on-device configuration profiles and switching.
+- [ ]  Analog input, EC, HE, Rapid Trigger, and more.
+- [ ]  Documentation.

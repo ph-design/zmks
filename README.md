@@ -1,55 +1,53 @@
+[中文](README.zh.md) | **English**
+
 # ZMKs
 
-This is a fork based on [ZMK Firmware](https://github.com/zmkfirmware/zmk) (v0.3 branch), maintained by [PH Design](https://github.com/ph-design). It includes additional cool features not yet available in the upstream ZMK project.
+ZMKs is a [ZMK Firmware](https://github.com/zmkfirmware/zmk) fork developed by [PH Design](https://github.com/ph-design) for custom keyboard production and product development. It retains ZMK's configuration model and flexibility while extending multi-transport connectivity, lighting, interaction, and visual configuration to support more everyday use cases and product design requirements.
 
-> **Upstream:** [zmkfirmware/zmk v0.3-branch](https://github.com/zmkfirmware/zmk/tree/v0.3-branch)
+The project follows upstream ZMK and community code and ideas, with firmware and [ZMKs Studio](https://zmks.phdesign.cc/) improvements driven by real keyboard projects.
 
----
+[ZMKs Studio](https://github.com/ph-design/zmks-studio) · [Roadmap](ROADMAP.md)
 
-## Differences from Official ZMK v0.3
+## Extensions
 
-### 2.4GHz Wireless Transport
+| Feature | Extensions in this fork |
+| --- | --- |
+| 2.4GHz enhancements | Dedicated Nordic ESB keyboard and receiver implementations, USB / BLE / 2.4GHz output selection, and pairing management |
+| Studio configuration | Runtime Hold-tap parameter and Combo slot editing, plus lighting, connection, and device management pages |
+| RGB matrix enhancements | Position-based animations, reactive effects, typing heatmap, and layer / Caps Lock / connection indicators |
+| Motion interaction | IMU-based case-tap actions, carry sleep, and wake settings |
+| Device maintenance | Extended device information, diagnostics, power management, and settings reset / recovery behavior |
 
-- Custom [Nordic ESB](https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/protocols/esb/index.html) driver with AES-128 encryption
-- 2.4GHz dongle/receiver support
-- USB / BLE / 2.4GHz multi-transport seamless switching
-- BLE & 2.4GHz radio coexistence management
+## Supported keyboards
 
-### RGB Underglow (inspired by [PR #2752](https://github.com/zmkfirmware/zmk/pull/2752))
+PH Design maintains configurations for:
 
-- Rewritten position-based animation system with 20+ effects
-- Layer LED indicators & CapsLock underglow
-- ZMK Studio RPC for lighting control
+| Model | Configuration repository |
+| --- | --- |
+| PH60-SC V2 | [ph_lite-zmk-config](https://github.com/ph-design/ph_lite-zmk-config) |
+| PH60-SC V2 EVO | [ph_lite-zmk-config](https://github.com/ph-design/ph_lite-zmk-config) |
+| PH60-Multi V2 | [ph_lite-zmk-config](https://github.com/ph-design/ph_lite-zmk-config) |
 
-### Other
+Third-party ZMK v0.3 keyboards can follow the [migration guide](docs/zmks/migration.md) while retaining their board, shield, keymap, compatible modules, and hardware definitions. Additional 2.4GHz, lighting, and sensor capabilities depend on the hardware. Migration from ZMK v0.4 / HWMv2 is not supported yet and awaits future adaptation.
 
-- ZMK Studio changes ,better UI and UX, you can try it out at [https:/zmks.phdesign.cc](https://zmks.phdesign.cc)
-- Better power management
-- A better settings reset firmware allow you to directly boot to bootloader
-  
-    AND MORE TO COME!
+## Collaboration
 
-### Documentation
+Many ZMKs improvements grow out of discussions and experiments around real keyboard projects. If you are preparing a new tri-mode custom keyboard product or would like to add a feature to an existing design, get in touch to discuss working together.
 
-We don't have a documentation, try to read the code, or contact me and AMA.
----
+## Documentation
 
-## Upstream ZMK
+For builds, flashing, and Studio enablement, use the official [Building and Flashing](https://v0-3-branch.zmk.dev/docs/development/local-toolchain/build-flash) and [ZMK Studio](https://v0-3-branch.zmk.dev/docs/features/studio) documentation. Use [ZMKs Studio](https://zmks.phdesign.cc/) for this fork's configuration extensions.
 
-[![Discord](https://img.shields.io/discord/719497620560543766)](https://zmk.dev/community/discord/invite)
-[![Build](https://github.com/zmkfirmware/zmk/workflows/Build/badge.svg)](https://github.com/zmkfirmware/zmk/actions)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.0%20adopted-ff69b4.svg)](CODE_OF_CONDUCT.md)
+See the [TODO list](ROADMAP.md) for planned work and [Issues](https://github.com/ph-design/zmks/issues) for bug reports.
 
-[ZMK Firmware](https://zmk.dev/) is an open source ([MIT](LICENSE)) keyboard firmware built on the [Zephyr™ Project](https://www.zephyrproject.org/) Real Time Operating System (RTOS). ZMK's goal is to provide a modern, wireless, and powerful firmware free of licensing issues.
+## License and credits
 
-Check out the website to learn more: https://zmk.dev/.
+Firmware and PH Design modifications use the [MIT License](LICENSE). Inherited website documentation has [separate licensing information](docs/README.md).
 
-You can also come join our [ZMK Discord Server](https://zmk.dev/community/discord/invite).
+Thanks to ZMK, Zephyr, and community contributors for their code and ideas.
 
-To review features, check out the [feature overview](https://zmk.dev/docs/). ZMK is under active development, and new features are listed with the [enhancement label](https://github.com/zmkfirmware/zmk/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement) in GitHub. Please feel free to add 👍 to the issue description of any requests to upvote the feature.
+## Contact
 
-## License
+[dev@phdesign.cc](mailto:dev@phdesign.cc) · [PHDesign official QQ group](https://qm.qq.com/q/4W58s74gZq) · [Discord](https://discord.gg/8UfQXcefPH)
 
-This project is a fork of [ZMK Firmware](https://github.com/zmkfirmware/zmk), licensed under the [MIT License](LICENSE). All modifications by PH Design are also released under the same MIT License.
-
-We don't have the time or energy to submit PRs to upstream ZMK. If you'd like to contribute any of our changes back, feel free to use our code directly — no permission needed. 
+[Website](https://phdesign.cc/) · [GitHub](https://github.com/ph-design) · [Bilibili](https://space.bilibili.com/4172216) · [Taobao](https://shop268559013.taobao.com)
