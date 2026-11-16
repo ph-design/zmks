@@ -59,6 +59,13 @@ config ZMK_STUDIO_TRANSPORT_UART
     select RING_BUFFER
     default y if $(dt_chosen_enabled,$(DT_CHOSEN_ZMK_STUDIO_RPC_UART))
 
+config ZMK_STUDIO_TRANSPORT_2G4
+    bool "Encrypted 2.4 GHz"
+    depends on ZMK_2G4
+    default y
+    help
+      Carry Studio RPC frames over the existing encrypted keyboard radio link.
+
 config ZMK_STUDIO_TRANSPORT_UART_RX_STACK_SIZE
     int "RX Stack Size"
     depends on !UART_INTERRUPT_DRIVEN

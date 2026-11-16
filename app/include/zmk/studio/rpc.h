@@ -227,3 +227,8 @@ void zmk_rpc_rx_notify(void);
         .tx_user_data = _tx_user_data,                                                             \
         .tx_notify = _tx_notify,                                                                   \
     }
+
+#if IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_2G4)
+/* Read only while the radio owns the current RPC transport. */
+uint32_t zmk_rpc_radio_tx_read(uint8_t *data, uint32_t size);
+#endif

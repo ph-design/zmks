@@ -8,6 +8,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <string.h>
+#include <zephyr/sys/atomic.h>
 
 #include <zmk/esb.h>
 #include <zmk/hid.h>
@@ -33,6 +34,8 @@ static bool report_is_release(const uint8_t *body, size_t len) {
 
 #define ZMK_2G4_KB_TIMEOUT_MS 500
 
+static atomic_t battery_percent = ATOMIC_INIT(-1);
+static atomic_t battery_updated_ms;
 static bool kb_connected;
 static bool rx_started;
 static uint32_t rx_total;
@@ -44,6 +47,7 @@ static void kb_lost_handler(struct k_work *work) {
         return;
     }
     kb_connected = false;
+    atomic_set(&battery_percent, -1);
     LOG_INF("2.4G keyboard lost (rx_total=%u, decrypt_fail=%u)", rx_total, rx_decrypt_fail);
 
     if (zmk_usb_get_status() == USB_DC_SUSPEND) {
@@ -157,6 +161,12 @@ static void process_rx_payload(const struct zmk_esb_payload *rx) {
         break;
     }
     case ZMK_2G4_MSG_KEEP_ALIVE:
+        if (dec_len == 2 && buf[1] <= 100) {
+            atomic_set(&battery_updated_ms, (atomic_val_t)k_uptime_get_32());
+            atomic_set(&battery_percent, buf[1]);
+        } else {
+            atomic_set(&battery_percent, -1);
+        }
         break;
     default:
         LOG_DBG("Unknown 2G4 message type: 0x%02x", buf[0]);
@@ -208,6 +218,11 @@ ZMK_SUBSCRIPTION(zmk_2g4_dongle, zmk_hid_indicators_changed);
 
 #endif /* CONFIG_ZMK_HID_INDICATORS */
 
+int zmk_2g4_dongle_battery_percent(void) {
+    uint32_t age = k_uptime_get_32() - (uint32_t)atomic_get(&battery_updated_ms);
+    return kb_connected && age < 2000 ? atomic_get(&battery_percent) : -1;
+}
+
 bool zmk_2g4_dongle_kb_connected(void) { return kb_connected; }
 
 void zmk_2g4_dongle_rx_stats(uint32_t *rx_total_out, uint32_t *decrypt_fail_out) {
@@ -242,6 +257,7 @@ static int zmk_2g4_dongle_init(void) {
 }
 
 int zmk_2g4_dongle_start(void) {
+    atomic_set(&battery_percent, -1);
     struct zmk_2g4_addr addr;
 
     zmk_2g4_addr_get(&addr);

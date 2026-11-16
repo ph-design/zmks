@@ -25,27 +25,6 @@ ZMK_RPC_SUBSYSTEM(pairing)
 
 #define PAIRING_KEY_LEN 16
 #define PAIRING_ADDR_LEN 5
-// Avoid BLE advertising channels 37/38/39 (2402/2426/2480 MHz).
-#define PAIRING_RESERVED_CH_37 2
-#define PAIRING_RESERVED_CH_38 26
-#define PAIRING_RESERVED_CH_39 80
-
-static bool pairing_channel_reserved(uint8_t channel) {
-    return channel == PAIRING_RESERVED_CH_37 || channel == PAIRING_RESERVED_CH_38 ||
-           channel == PAIRING_RESERVED_CH_39;
-}
-
-static uint8_t pairing_pick_channel(void) {
-    for (int i = 0; i < 32; i++) {
-        uint8_t candidate = (uint8_t)(sys_rand32_get() % 101u);
-        if (!pairing_channel_reserved(candidate)) {
-            return candidate;
-        }
-    }
-
-    return CONFIG_ZMK_2G4_RF_CHANNEL;
-}
-
 // Generate a printable, non-degenerate address for manual entry on the dongle.
 static void pairing_generate_addr(struct zmk_2g4_addr *addr) {
     uint32_t base_rnd = sys_rand32_get();
@@ -61,7 +40,7 @@ static void pairing_generate_addr(struct zmk_2g4_addr *addr) {
         addr->prefix = (addr->prefix == 0x7e) ? 0x21 : (uint8_t)(addr->prefix + 1);
     }
 
-    addr->rf_channel = pairing_pick_channel();
+    addr->rf_channel = CONFIG_ZMK_2G4_RF_CHANNEL;
 }
 
 static void pairing_fill_addr(zmk_pairing_GetPairStateResponse *resp) {
@@ -108,10 +87,15 @@ static zmk_studio_Response generate_and_pair(const zmk_studio_Request *req) {
     uint8_t key[PAIRING_KEY_LEN];
     struct zmk_2g4_addr addr;
 
-    sys_rand_get(key, sizeof(key));
+    int err = sys_csrand_get(key, sizeof(key));
+    if (err) {
+        memset(key, 0, sizeof(key));
+        LOG_ERR("Pairing entropy failed: %d", err);
+        return ZMK_RPC_SIMPLE_ERR(GENERIC);
+    }
     pairing_generate_addr(&addr);
 
-    int err = zmk_2g4_crypto_set_paired_key(key);
+    err = zmk_2g4_crypto_set_paired_key(key);
 
     if (err == 0) {
         err = zmk_2g4_addr_set_paired(&addr);

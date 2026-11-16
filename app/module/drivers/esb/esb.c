@@ -30,8 +30,8 @@ LOG_MODULE_REGISTER(zmk_esb, CONFIG_ZMK_ESB_LOG_LEVEL);
 
 #define ESB_USE_FAST_RAMP_UP 1
 
-#define ACK_TIMEOUT_2MBPS 150
-#define ACK_TIMEOUT_1MBPS 300
+#define ACK_TIMEOUT_2MBPS 350
+#define ACK_TIMEOUT_1MBPS 600
 
 #define ESB_TIMER_IRQ_PRIO 2
 #define ESB_RADIO_IRQ_PRIO 1
@@ -800,8 +800,10 @@ int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
         }
         irq_unlock(key);
     } else {
+        unsigned int key = irq_lock();
         memcpy(&ack_pl[payload->pipe], payload, sizeof(struct zmk_esb_payload));
         ack_pl_pending[payload->pipe] = true;
+        irq_unlock(key);
     }
 
     return 0;

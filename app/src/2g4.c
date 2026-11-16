@@ -15,16 +15,18 @@
 #include <zmk/2g4.h>
 #include <zmk/2g4_protocol.h>
 #include <zmk/2g4_crypto.h>
+#include <zmk/studio/radio.h>
+#include <zmk/battery.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-static struct zmk_esb_payload tx_payload;
 static bool ready;
 static struct k_work_delayable resend_work;
 static struct k_work_delayable keepalive_work;
 
 #define ZMK_2G4_KEEPALIVE_MS 250
+#define ZMK_2G4_AUTH_RETRY_MS 20
 static uint8_t consec_fail_count;
 
 static void resend_work_handler(struct k_work *work) {
@@ -34,6 +36,35 @@ static void resend_work_handler(struct k_work *work) {
 
     zmk_2g4_send_keyboard_report();
     zmk_2g4_send_consumer_report();
+}
+
+static struct k_work_delayable session_work;
+
+static void session_work_handler(struct k_work *work) {
+    ARG_UNUSED(work);
+    if (!ready) {
+        return;
+    }
+    bool was_ready = zmk_2g4_crypto_link_ready();
+    struct zmk_esb_payload payload = {.pipe = 0, .noack = false};
+    uint8_t type;
+    int len = zmk_2g4_crypto_session_tx(payload.data, sizeof(payload.data), &type);
+    if (len > 0) {
+        payload.length = len;
+        if (!zmk_esb_write_payload(&payload)) {
+            zmk_2g4_crypto_session_sent(type);
+        }
+    }
+    if (!was_ready && zmk_2g4_crypto_link_ready()) {
+        zmk_2g4_send_keyboard_report();
+        zmk_2g4_send_consumer_report();
+    }
+    if (!zmk_2g4_crypto_link_ready()) {
+        uint32_t delay = consec_fail_count >= CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES
+                             ? ZMK_2G4_KEEPALIVE_MS
+                             : ZMK_2G4_AUTH_RETRY_MS;
+        k_work_reschedule(&session_work, K_MSEC(delay));
+    }
 }
 
 static void keepalive_handler(struct k_work *work) {
@@ -46,12 +77,11 @@ static void keepalive_handler(struct k_work *work) {
         return;
     }
 
-    tx_payload.pipe = 0;
-    tx_payload.noack = false;
+    struct zmk_esb_payload tx_payload = {.pipe = 0, .noack = false};
     tx_payload.data[0] = ZMK_2G4_MSG_KEEP_ALIVE;
+    tx_payload.data[1] = zmk_battery_is_valid() ? zmk_battery_state_of_charge() : 255;
 
-    int enc_len =
-        zmk_2g4_crypto_encrypt(tx_payload.data, 1, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
+    int enc_len = zmk_2g4_crypto_encrypt(tx_payload.data, 2, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH);
     if (enc_len < 0) {
         k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
         return;
@@ -69,16 +99,28 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
         consec_fail_count = 0;
         break;
     case ZMK_ESB_EVENT_TX_FAILED:
-        zmk_esb_flush_tx();
-        if (++consec_fail_count < CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES) {
+        if (consec_fail_count < CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES) {
+            consec_fail_count++;
+        }
+        if (consec_fail_count < CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES) {
             k_work_reschedule(&resend_work, K_MSEC(1));
         } else {
-            LOG_WRN("2.4G: %d consecutive TX failures, dongle unreachable", consec_fail_count);
+            if (zmk_2g4_crypto_link_ready()) {
+                zmk_2g4_crypto_reset_link();
+            }
+            k_work_reschedule(&session_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
         }
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
         while (zmk_esb_read_rx_payload(&rx) == 0) {
+            int len = zmk_2g4_crypto_decrypt(rx.data, rx.length);
+            if (len == 0) {
+                k_work_reschedule(&session_work, K_NO_WAIT);
+            }
+            if (len > 0) {
+                studio_radio_received(rx.data, len);
+            }
         }
         break;
     }
@@ -90,8 +132,7 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
         return -ENODEV;
     }
 
-    tx_payload.pipe = 0;
-    tx_payload.noack = false;
+    struct zmk_esb_payload tx_payload = {.pipe = 0, .noack = false};
     tx_payload.length = len + 1;
     tx_payload.data[0] = report_type;
     memcpy(&tx_payload.data[1], body, MIN(len, CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH - 1));
@@ -105,8 +146,8 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
 
     int ret = zmk_esb_write_payload(&tx_payload);
     if (ret == -ENOMEM) {
-        zmk_esb_flush_tx();
-        ret = zmk_esb_write_payload(&tx_payload);
+        k_work_reschedule(&resend_work, K_MSEC(1));
+        return -EAGAIN;
     }
 
     k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
@@ -163,6 +204,15 @@ int zmk_2g4_start(void) {
         return 0;
     }
 
+    int auth_err = zmk_2g4_crypto_reserve_session_id();
+    if (auth_err) {
+        return auth_err;
+    }
+    auth_err = zmk_2g4_crypto_session_start();
+    if (auth_err) {
+        return auth_err;
+    }
+    k_work_init_delayable(&session_work, session_work_handler);
     k_work_init_delayable(&resend_work, resend_work_handler);
     k_work_init_delayable(&keepalive_work, keepalive_handler);
 
@@ -197,10 +247,11 @@ int zmk_2g4_start(void) {
     zmk_esb_set_tx_power(CONFIG_ZMK_2G4_TX_POWER);
 
     ready = true;
-    LOG_INF("2.4G transport started (%s addr, ch=%u)", zmk_2g4_addr_is_paired() ? "paired" : "default",
-            addr.rf_channel);
+    LOG_INF("2.4G transport started (%s addr, ch=%u)",
+            zmk_2g4_addr_is_paired() ? "paired" : "default", addr.rf_channel);
 
-    zmk_2g4_crypto_session_start();
+    studio_radio_started();
+    k_work_schedule(&session_work, K_NO_WAIT);
     send_boot_announcement();
 
     k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
@@ -214,6 +265,7 @@ int zmk_2g4_stop(void) {
     }
 
     ready = false;
+    k_work_cancel_delayable(&session_work);
     k_work_cancel_delayable(&resend_work);
     k_work_cancel_delayable(&keepalive_work);
     zmk_esb_flush_tx();

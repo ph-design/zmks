@@ -16,6 +16,7 @@
 #include <zephyr/settings/settings.h>
 #endif
 #include <zmk/2g4_crypto.h>
+#include <zmk/2g4_session.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -27,7 +28,13 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MIC_SIZE 4
 #define OVERHEAD (HEADER_SIZE + MIC_SIZE)
 
-#define CCM_DIR_DATA 1
+#if IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
+#define CCM_DIR_TX 0
+#define CCM_DIR_RX 1
+#else
+#define CCM_DIR_TX 1
+#define CCM_DIR_RX 0
+#endif
 #define CCM_PDU_HDR 3
 #define CCM_MAX_PAYLOAD 23
 #define CCM_SCRATCH_SIZE 43
@@ -51,12 +58,26 @@ static uint32_t rx_session_id;
 static uint32_t rx_counter;
 static uint64_t rx_window;
 static bool rx_session_init;
+static bool rx_floor_valid;
+static uint32_t rx_floor;
+static struct zmk_2g4_session link_session;
+static K_MUTEX_DEFINE(crypto_state_lock);
 
 static void reset_rx_replay_state(void) {
     rx_session_id = 0;
     rx_counter = 0;
     rx_window = 0;
     rx_session_init = false;
+    rx_floor_valid = false;
+    zmk_2g4_session_init(&link_session, tx_session_id);
+}
+
+static bool pairing_key_valid(const uint8_t key[AES_KEY_SIZE]) {
+    uint8_t any = 0;
+    for (size_t i = 0; i < AES_KEY_SIZE; i++) {
+        any |= key[i];
+    }
+    return any && (!factory_valid || memcmp(key, factory_key, AES_KEY_SIZE));
 }
 
 static struct k_spinlock ccm_lock;
@@ -187,10 +208,10 @@ static bool ccm_self_test(void) {
     uint8_t out[8];
     bool ok = false;
 
-    if (ccm_encrypt_payload(tk, 0x12345678u, 1u, CCM_DIR_DATA, pt, sizeof(pt), ct_mic)) {
+    if (ccm_encrypt_payload(tk, 0x12345678u, 1u, 1u, pt, sizeof(pt), ct_mic)) {
         return false;
     }
-    if (ccm_decrypt_payload(tk, 0x12345678u, 1u, CCM_DIR_DATA, ct_mic, sizeof(pt), out, &ok)) {
+    if (ccm_decrypt_payload(tk, 0x12345678u, 1u, 1u, ct_mic, sizeof(pt), out, &ok)) {
         return false;
     }
     if (!ok || memcmp(out, pt, sizeof(pt)) != 0) {
@@ -198,7 +219,7 @@ static bool ccm_self_test(void) {
     }
 
     ct_mic[0] ^= 0x01;
-    if (ccm_decrypt_payload(tk, 0x12345678u, 1u, CCM_DIR_DATA, ct_mic, sizeof(pt), out, &ok)) {
+    if (ccm_decrypt_payload(tk, 0x12345678u, 1u, 1u, ct_mic, sizeof(pt), out, &ok)) {
         return false;
     }
     if (ok) {
@@ -277,7 +298,12 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
         if (read_cb(cb_arg, buf, sizeof(buf)) != AES_KEY_SIZE) {
             return -EIO;
         }
+        if (!pairing_key_valid(buf)) {
+            memset(buf, 0, sizeof(buf));
+            return -EINVAL;
+        }
         memcpy(aes_key, buf, AES_KEY_SIZE);
+        memset(buf, 0, sizeof(buf));
         key_valid = true;
         using_paired = true;
         return 0;
@@ -307,14 +333,24 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
 SETTINGS_STATIC_HANDLER_DEFINE(zmk_2g4, "2g4", NULL, settings_set_2g4, NULL, NULL);
 
 int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
+    if (!key || !pairing_key_valid(key)) {
+        return -EINVAL;
+    }
     int ret = settings_save_one("2g4/key", key, AES_KEY_SIZE);
     if (ret) {
         return ret;
     }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    bool changed = !using_paired || memcmp(aes_key, key, AES_KEY_SIZE);
     memcpy(aes_key, key, AES_KEY_SIZE);
     key_valid = true;
     using_paired = true;
-    reset_rx_replay_state();
+    if (changed) {
+        reset_rx_replay_state();
+    } else {
+        zmk_2g4_session_init(&link_session, tx_session_id);
+    }
+    k_mutex_unlock(&crypto_state_lock);
     return 0;
 }
 
@@ -323,6 +359,7 @@ int zmk_2g4_crypto_clear_paired_key(void) {
     if (ret) {
         return ret;
     }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
     using_paired = false;
     if (factory_valid) {
         memcpy(aes_key, factory_key, AES_KEY_SIZE);
@@ -331,6 +368,7 @@ int zmk_2g4_crypto_clear_paired_key(void) {
         key_valid = false;
     }
     reset_rx_replay_state();
+    k_mutex_unlock(&crypto_state_lock);
     return 0;
 }
 
@@ -339,9 +377,11 @@ int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
     if (ret) {
         return ret;
     }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
     memcpy(&paired_addr, addr, sizeof(paired_addr));
     addr_paired = true;
-    reset_rx_replay_state();
+    zmk_2g4_session_init(&link_session, tx_session_id);
+    k_mutex_unlock(&crypto_state_lock);
     return 0;
 }
 
@@ -350,8 +390,10 @@ int zmk_2g4_addr_clear_paired(void) {
     if (ret) {
         return ret;
     }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
     addr_paired = false;
-    reset_rx_replay_state();
+    zmk_2g4_session_init(&link_session, tx_session_id);
+    k_mutex_unlock(&crypto_state_lock);
     return 0;
 }
 #else
@@ -373,152 +415,187 @@ int zmk_2g4_addr_clear_paired(void) { return -ENOTSUP; }
 static uint32_t reserved_session_id;
 
 int zmk_2g4_crypto_reserve_session_id(void) {
-    if (session_started) {
+    if (session_started || reserved_session_id) {
         return 0;
     }
-
 #if IS_ENABLED(CONFIG_SETTINGS)
-    uint32_t next = tx_epoch + 1;
-    if (next == 0) {
-        next = 1;
+    if (tx_epoch == UINT32_MAX) {
+        return -ERANGE;
     }
-
-    // Flash writes need the BLE ticker while dual-radio mode is using it.
+    uint32_t next = tx_epoch + 1;
     int ret = settings_save_one("2g4/tx_epoch", &next, sizeof(next));
     if (ret) {
-        LOG_ERR("2.4G tx_epoch persist failed: %d", ret);
         return ret;
     }
-
     tx_epoch = next;
     reserved_session_id = next;
-#endif
-
     return 0;
-}
-
-void zmk_2g4_crypto_session_start(void) {
-    if (session_started) {
-        return;
-    }
-    session_started = true;
-
-#if IS_ENABLED(CONFIG_SETTINGS)
-    // Never write flash here: this runs with the BLE controller already disabled.
-    tx_session_id = reserved_session_id ? reserved_session_id : (tx_epoch + 1);
-    if (tx_session_id == 0) {
-        tx_session_id = 1;
-    }
-    reserved_session_id = 0;
 #else
-    do {
-        tx_session_id = sys_rand32_get();
-    } while (tx_session_id == 0);
+    return -ENOTSUP;
 #endif
 }
 
-int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
-    __ASSERT_NO_MSG(data != NULL);
+int zmk_2g4_crypto_session_start(void) {
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    int ret = 0;
+    if (!session_started) {
+        if (!reserved_session_id) {
+            ret = -EACCES;
+        } else {
+            tx_session_id = reserved_session_id;
+            reserved_session_id = 0;
+            session_started = true;
+            reset_rx_replay_state();
+        }
+    }
+    k_mutex_unlock(&crypto_state_lock);
+    return ret;
+}
 
-    if (!key_valid) {
+bool zmk_2g4_crypto_link_ready(void) {
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    bool ready = using_paired && addr_paired && zmk_2g4_session_ready(&link_session);
+    k_mutex_unlock(&crypto_state_lock);
+    return ready;
+}
+
+void zmk_2g4_crypto_reset_link(void) {
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    zmk_2g4_session_init(&link_session, tx_session_id);
+    k_mutex_unlock(&crypto_state_lock);
+}
+
+static int encrypt_locked(uint8_t *data, size_t len, size_t buf_size) {
+    if (!key_valid || !ccm_ok || !using_paired || !addr_paired || !session_started) {
         return -EACCES;
     }
-    if (!ccm_ok) {
-        return -EIO;
+    if (!len || len > 20 || buf_size < len + OVERHEAD) {
+        return -EMSGSIZE;
     }
-    if (len + OVERHEAD > buf_size) {
-        return -ENOMEM;
-    }
-
-    k_spinlock_key_t lock = k_spin_lock(&ccm_lock);
-    uint32_t ctr = tx_counter;
-    if (ctr != 0xFFFFFFFFu) {
-        tx_counter = ctr + 1;
-    }
-    k_spin_unlock(&ccm_lock, lock);
-    if (ctr == 0xFFFFFFFFu) {
-        LOG_ERR("2.4G TX counter exhausted, reboot required");
+    if (tx_counter == UINT32_MAX) {
         return -ERANGE;
     }
 
+    uint32_t ctr = tx_counter++;
     uint8_t ct_mic[CCM_MAX_PAYLOAD + MIC_SIZE];
-
-    int ret = ccm_encrypt_payload(aes_key, tx_session_id, ctr, CCM_DIR_DATA, data, len, ct_mic);
+    int ret = ccm_encrypt_payload(aes_key, tx_session_id, ctr, CCM_DIR_TX, data, len, ct_mic);
     if (ret) {
         return ret;
     }
-
     sys_put_le32(tx_session_id, data);
     sys_put_le32(ctr, data + SESSION_ID_SIZE);
     memcpy(data + HEADER_SIZE, ct_mic, len + MIC_SIZE);
-
-    return (int)(len + OVERHEAD);
+    return len + OVERHEAD;
 }
 
-static bool replay_accept(uint32_t ctr) {
+int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size) {
+    if (!data) {
+        return -EINVAL;
+    }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    int ret = zmk_2g4_session_ready(&link_session) ? encrypt_locked(data, len, buf_size) : -EAGAIN;
+    k_mutex_unlock(&crypto_state_lock);
+    return ret;
+}
+
+int zmk_2g4_crypto_session_tx(uint8_t *data, size_t buf_size, uint8_t *type) {
+    if (!data || !type || buf_size < OVERHEAD) {
+        return -EINVAL;
+    }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    int ret = zmk_2g4_session_prepare(&link_session, data, buf_size - OVERHEAD);
+    if (ret > 0) {
+        *type = data[0];
+        ret = encrypt_locked(data, ret, buf_size);
+    }
+    k_mutex_unlock(&crypto_state_lock);
+    return ret;
+}
+
+void zmk_2g4_crypto_session_sent(uint8_t type) {
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    zmk_2g4_session_sent(&link_session, type);
+    k_mutex_unlock(&crypto_state_lock);
+}
+
+static bool replay_allowed(uint32_t session, uint32_t ctr) {
+    if (!rx_session_init) {
+        return true;
+    }
+    if (session != rx_session_id) {
+        return session > rx_session_id;
+    }
+    if (rx_floor_valid && ctr <= rx_floor) {
+        return false;
+    }
     if (ctr > rx_counter) {
-        uint32_t shift = ctr - rx_counter;
-        rx_window = (shift >= REPLAY_WINDOW) ? 0 : (rx_window << shift);
-        rx_window |= 1ULL;
-        rx_counter = ctr;
         return true;
     }
     uint32_t diff = rx_counter - ctr;
-    if (diff >= REPLAY_WINDOW) {
-        return false;
-    }
-    if (rx_window & (1ULL << diff)) {
-        return false;
-    }
-    rx_window |= (1ULL << diff);
-    return true;
+    return diff < REPLAY_WINDOW && !(rx_window & (1ULL << diff));
 }
 
-int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
-    __ASSERT_NO_MSG(data != NULL);
+static void replay_record(uint32_t session, uint32_t ctr, bool fresh) {
+    if (!rx_session_init || session != rx_session_id) {
+        rx_session_id = session;
+        rx_counter = ctr;
+        rx_window = 1;
+        rx_session_init = true;
+        rx_floor_valid = false;
+    } else if (ctr > rx_counter) {
+        uint32_t shift = ctr - rx_counter;
+        rx_window = shift >= REPLAY_WINDOW ? 1 : (rx_window << shift) | 1;
+        rx_counter = ctr;
+    } else {
+        rx_window |= 1ULL << (rx_counter - ctr);
+    }
+    if (fresh) {
+        rx_floor = ctr;
+        rx_floor_valid = true;
+    }
+}
 
-    if (!key_valid) {
+static int decrypt_locked(uint8_t *data, size_t len) {
+    if (!key_valid || !ccm_ok || !using_paired || !addr_paired || !session_started) {
         return -EACCES;
     }
-    if (!ccm_ok) {
-        return -EIO;
-    }
-    if (len <= OVERHEAD) {
+    if (len <= OVERHEAD || len > 32) {
         return -EINVAL;
     }
 
-    uint32_t session_id = sys_get_le32(data);
+    uint32_t session = sys_get_le32(data);
     uint32_t ctr = sys_get_le32(data + SESSION_ID_SIZE);
     size_t ct_len = len - OVERHEAD;
-
     uint8_t pt[CCM_MAX_PAYLOAD];
     bool mic_ok = false;
-    int ret = ccm_decrypt_payload(aes_key, session_id, ctr, CCM_DIR_DATA, data + HEADER_SIZE,
-                                  ct_len, pt, &mic_ok);
-    if (ret) {
-        return ret;
+    int ret = ccm_decrypt_payload(aes_key, session, ctr, CCM_DIR_RX, data + HEADER_SIZE, ct_len, pt,
+                                  &mic_ok);
+    if (ret || !mic_ok) {
+        return ret ? ret : -EBADMSG;
     }
-    if (!mic_ok) {
-        return -EBADMSG;
-    }
-
-    bool new_session = !rx_session_init || (session_id != rx_session_id);
-    if (new_session) {
-        if (rx_session_init && (int32_t)(session_id - rx_session_id) <= 0) {
-            return -EACCES;
-        }
-    } else if (!replay_accept(ctr)) {
+    if (!replay_allowed(session, ctr)) {
         return -EACCES;
     }
 
-    memcpy(data, pt, ct_len);
-
-    if (new_session) {
-        rx_session_id = session_id;
-        rx_session_init = true;
-        rx_counter = ctr;
-        rx_window = 1ULL;
+    bool fresh = false;
+    ret = zmk_2g4_session_receive(&link_session, pt, ct_len, session, &fresh);
+    if (ret < 0) {
+        return ret == -EAGAIN ? 0 : ret;
     }
+    replay_record(session, ctr, fresh);
+    if (!ret) {
+        return 0;
+    }
+    memcpy(data, pt, ct_len);
+    return ct_len;
+}
 
-    return (int)ct_len;
+int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len) {
+    if (!data) {
+        return -EINVAL;
+    }
+    k_mutex_lock(&crypto_state_lock, K_FOREVER);
+    int ret = decrypt_locked(data, len);
+    k_mutex_unlock(&crypto_state_lock);
+    return ret;
 }

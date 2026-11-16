@@ -19,9 +19,13 @@ LOG_MODULE_DECLARE(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 #define UART_DEVICE_NODE DT_CHOSEN(zmk_studio_rpc_uart)
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
+static struct k_spinlock uart_state_lock;
+static bool uart_selected;
 
 static void tx_notify(struct ring_buf *tx_ring_buf, size_t written, bool msg_done,
                       void *user_data) {
+    if (!uart_selected)
+        return;
     if (msg_done || (ring_buf_size_get(tx_ring_buf) > (ring_buf_capacity_get(tx_ring_buf) / 2))) {
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
         uart_irq_tx_enable(uart_dev);
@@ -70,6 +74,9 @@ K_THREAD_DEFINE(uart_transport_read_thread, CONFIG_ZMK_STUDIO_TRANSPORT_UART_RX_
 #endif
 
 static int start_rx() {
+    k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
+    uart_selected = true;
+    k_spin_unlock(&uart_state_lock, key);
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
     uart_irq_rx_enable(uart_dev);
 #else
@@ -79,11 +86,15 @@ static int start_rx() {
 }
 
 static int stop_rx(void) {
+    k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
+    uart_selected = false;
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
     uart_irq_rx_disable(uart_dev);
+    uart_irq_tx_disable(uart_dev);
 #else
     k_thread_suspend(uart_transport_read_thread);
 #endif
+    k_spin_unlock(&uart_state_lock, key);
     return 0;
 }
 
@@ -100,6 +111,13 @@ static void serial_cb(const struct device *dev, void *user_data) {
         return;
     }
 
+    k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
+    if (!uart_selected) {
+        uart_irq_rx_disable(uart_dev);
+        uart_irq_tx_disable(uart_dev);
+        k_spin_unlock(&uart_state_lock, key);
+        return;
+    }
     if (uart_irq_rx_ready(uart_dev)) {
         /* read until FIFO empty */
         uint32_t last_read = 0, len = 0;
@@ -124,20 +142,18 @@ static void serial_cb(const struct device *dev, void *user_data) {
 
     if (uart_irq_tx_ready(uart_dev)) {
         struct ring_buf *tx_buf = zmk_rpc_get_tx_buf();
-        uint32_t len;
-        while ((len = ring_buf_size_get(tx_buf)) > 0) {
-            uint8_t *buf;
-            uint32_t claim_len = ring_buf_get_claim(tx_buf, &buf, tx_buf->size);
-
-            if (claim_len == 0) {
-                continue;
-            }
-
+        uint8_t *buf;
+        uint32_t claim_len = ring_buf_get_claim(tx_buf, &buf, 64);
+        if (claim_len) {
             int sent = uart_fifo_fill(uart_dev, buf, claim_len);
-
-            ring_buf_get_finish(tx_buf, MAX(sent, 0));
+            ring_buf_get_finish(tx_buf, sent > 0 ? MIN((uint32_t)sent, claim_len) : 0);
         }
+        /* CDC completion schedules the next callback. Never wait on the USB
+         * workqueue that must drain the FIFO we are trying to fill. */
+        if (ring_buf_is_empty(tx_buf))
+            uart_irq_tx_disable(uart_dev);
     }
+    k_spin_unlock(&uart_state_lock, key);
 }
 
 #endif

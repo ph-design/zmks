@@ -13,7 +13,11 @@
 bool zmk_2g4_crypto_enabled(void);
 uint32_t zmk_2g4_crypto_tx_session_id(void);
 int zmk_2g4_crypto_reserve_session_id(void);
-void zmk_2g4_crypto_session_start(void);
+int zmk_2g4_crypto_session_start(void);
+bool zmk_2g4_crypto_link_ready(void);
+void zmk_2g4_crypto_reset_link(void);
+int zmk_2g4_crypto_session_tx(uint8_t *data, size_t buf_size, uint8_t *type);
+void zmk_2g4_crypto_session_sent(uint8_t type);
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size);
 int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len);
 

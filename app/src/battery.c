@@ -27,6 +27,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #endif
 
 static uint8_t last_state_of_charge = 0;
+static bool battery_sample_valid;
+bool zmk_battery_is_valid(void) { return battery_sample_valid; }
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
 static bool rgb_off_by_low_bat = false;
@@ -134,6 +136,7 @@ static int zmk_battery_update(const struct device *battery) {
     }
 #endif
 
+    battery_sample_valid = true;
     if (last_state_of_charge != state_of_charge.val1) {
         last_state_of_charge = state_of_charge.val1;
 
