@@ -403,6 +403,14 @@ if ZMK_RGB_UNDERGLOW
 config ZMK_RGB_UNDERGLOW_EXT_POWER
     bool "RGB underglow toggling also controls external power"
 
+config ZMK_RGB_UNDERGLOW_FADE
+    bool "Enable RGB underglow fades by default"
+
+config ZMK_RGB_UNDERGLOW_FADE_MS
+    int "Default RGB underglow fade time (ms)"
+    range 1 1000
+    default 180
+
 config ZMK_RGB_UNDERGLOW_BRT_MIN
     int "RGB underglow minimum brightness in percent"
     range 0 100

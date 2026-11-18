@@ -9,6 +9,7 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/sys/atomic.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -213,6 +214,13 @@ static struct color_rgb_float fx_pixels[STRIP_NUM_PIXELS];
 
 static struct rgb_underglow_state state;
 
+#define FADE_ENABLED BIT(0)
+#define FADE_SCALE 1000U
+#define FADE_DEFAULT ((CONFIG_ZMK_RGB_UNDERGLOW_FADE_MS << 1) |                              \
+                      IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_FADE))
+
+static atomic_t fade_config = ATOMIC_INIT(FADE_DEFAULT);
+
 // idle/unplugged only suppress rendering, state.on is untouched; USB state is read live
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_USB)
 static bool auto_off_usb_override;
@@ -241,15 +249,16 @@ static void user_color_rgb_float(struct color_rgb_float *rgb) {
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
 static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
 
-static void underglow_ext_power_set(bool on) {
+static int underglow_ext_power_set(bool on) {
     if (ext_power == NULL) {
-        return;
+        return -ENODEV;
     }
 
     int rc = on ? ext_power_enable_transient(ext_power) : ext_power_disable_transient(ext_power);
     if (rc != 0) {
         LOG_ERR("Unable to %s EXT_POWER: %d", on ? "enable" : "disable", rc);
     }
+    return rc;
 }
 #endif
 
@@ -589,46 +598,126 @@ static void zmk_rgb_underglow_apply_layer_overlay(void) {
 /*  Tick / Timer                                                             */
 /* ========================================================================= */
 
-static void zmk_rgb_underglow_tick(struct k_work *work) {
-    const struct rgb_effect_desc *eff = &effect_table[state.current_effect];
+static int underglow_write_pixels(void) {
+    int err = led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
+    if (err < 0) {
+        LOG_ERR("Failed to update the RGB strip (%d)", err);
+    }
+    return err;
+}
 
-    /* Drain any pending keypress events */
+static atomic_t underglow_suspended;
+static atomic_t underglow_force_off;
+static uint32_t fade_position;
+static uint32_t fade_updated;
+static bool fade_target;
+static bool underglow_blank;
+
+static uint32_t underglow_fade_level(bool target, uint32_t duration, uint32_t now) {
+    uint32_t delta = MIN(now - fade_updated, duration);
+    fade_updated = now;
+    if (!duration) {
+        fade_position = target ? FADE_SCALE : 0;
+    } else if (target == fade_target) {
+        uint32_t step = delta * FADE_SCALE / duration;
+        if (target) {
+            fade_position = MIN(fade_position + step, FADE_SCALE);
+        } else {
+            fade_position -= MIN(fade_position, step);
+        }
+    }
+    fade_target = target;
+    return fade_position * fade_position * (3 * FADE_SCALE - 2 * fade_position) /
+           (FADE_SCALE * FADE_SCALE);
+}
+
+static int underglow_clear(void) {
+    fade_position = 0;
+    fade_target = false;
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    int err = underglow_ext_power_set(false);
+#else
+    memset(pixels, 0, sizeof(pixels));
+    int err = underglow_write_pixels();
+#endif
+    underglow_blank = err == 0;
+    return err;
+}
+
+static void underglow_render_frame(void) {
+    const struct rgb_effect_desc *eff = &effect_table[state.current_effect];
     struct effect_event ev;
     while (k_msgq_get(&effect_event_msgq, &ev, K_NO_WAIT) == 0) {
         if (eff->on_keypress) {
             eff->on_keypress(ev.position);
         }
     }
-
-    /* Run current effect renderer */
     eff->render();
-
-    /* Convert float pixels to LED strip format */
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         rgb_float_to_led(i, &fx_pixels[i], &pixels[i]);
     }
-
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
     zmk_rgb_underglow_apply_layer_overlay();
 #endif
     zmk_rgb_underglow_apply_status_overlay(rgb_underglow_top_layer());
-
-    int err = led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
-    if (err < 0) {
-        LOG_ERR("Failed to update the RGB strip (%d)", err);
-    }
 }
 
-K_WORK_DEFINE(underglow_tick_work, zmk_rgb_underglow_tick);
-
-static void zmk_rgb_underglow_tick_handler(struct k_timer *timer) {
-    if (!underglow_should_render()) {
+static void zmk_rgb_underglow_tick(struct k_work *work) {
+    if (atomic_get(&underglow_suspended)) {
         return;
     }
-    k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_tick_work);
+    if (atomic_cas(&underglow_force_off, 1, 0)) {
+        underglow_clear();
+        return;
+    }
+    uint32_t now = k_uptime_get_32();
+    uint32_t config = atomic_get(&fade_config);
+    uint32_t duration = (config & FADE_ENABLED) ? config >> 1 : 0;
+    bool was_lit = fade_position != 0;
+    bool target = underglow_should_render();
+    uint32_t level = underglow_fade_level(target, duration, now);
+
+    if (!target && !fade_position) {
+        if (!underglow_blank) {
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+            if (was_lit && duration && ext_power_get(ext_power) > 0) {
+                memset(pixels, 0, sizeof(pixels));
+                underglow_write_pixels();
+            }
+#endif
+            underglow_clear();
+        }
+        return;
+    }
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (target && (underglow_blank || !was_lit) && ext_power_get(ext_power) <= 0 &&
+        underglow_ext_power_set(true)) {
+        fade_position = 0;
+        fade_target = false;
+        return;
+    }
+#else
+    ARG_UNUSED(was_lit);
+#endif
+    underglow_blank = false;
+    underglow_render_frame();
+    if (level < FADE_SCALE) {
+        for (size_t i = 0; i < STRIP_NUM_PIXELS; i++) {
+            pixels[i].r = pixels[i].r * level / FADE_SCALE;
+            pixels[i].g = pixels[i].g * level / FADE_SCALE;
+            pixels[i].b = pixels[i].b * level / FADE_SCALE;
+        }
+    }
+    underglow_write_pixels();
+    if (!atomic_get(&underglow_suspended)) {
+        int32_t remaining = 1000 / ANIMATION_FPS - (int32_t)(k_uptime_get_32() - now);
+        k_work_schedule_for_queue(zmk_workqueue_lowprio_work_q(),
+                                  k_work_delayable_from_work(work), K_MSEC(MAX(1, remaining)));
+    }
 }
 
-K_TIMER_DEFINE(underglow_tick, zmk_rgb_underglow_tick_handler, NULL);
+static K_WORK_DELAYABLE_DEFINE(underglow_work, zmk_rgb_underglow_tick);
 
 /* ========================================================================= */
 /*  Settings                                                                 */
@@ -638,6 +727,20 @@ K_TIMER_DEFINE(underglow_tick, zmk_rgb_underglow_tick_handler, NULL);
 static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
     int rc;
+
+    if (settings_name_steq(name, "fade", &next) && !next) {
+        uint16_t value;
+        if (len != sizeof(value)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &value, sizeof(value));
+        if (rc != sizeof(value) || (value >> 1) < 1 ||
+            (value >> 1) > ZMK_RGB_UNDERGLOW_FADE_MAX_MS) {
+            return rc < 0 ? rc : -EINVAL;
+        }
+        atomic_set(&fade_config, value);
+        return 0;
+    }
 
     if (settings_name_steq(name, "state", &next) && !next) {
         if (len != sizeof(state)) {
@@ -787,39 +890,64 @@ int zmk_rgb_underglow_get_state(bool *on_off) {
     return 0;
 }
 
-#if !IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-static void zmk_rgb_underglow_off_handler(struct k_work *work) {
-    if (underglow_should_render()) {
-        return;
-    }
-    for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
-        pixels[i] = (struct led_rgb){r : 0, g : 0, b : 0};
-    }
-    led_strip_update_rgb(led_strip, pixels, STRIP_NUM_PIXELS);
-}
-
-K_WORK_DEFINE(underglow_off_work, zmk_rgb_underglow_off_handler);
-#endif
-
 int zmk_rgb_underglow_apply_state(void) {
     if (!led_strip)
         return -ENODEV;
 
-    if (underglow_should_render()) {
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-        underglow_ext_power_set(true);
-#endif
-        k_timer_start(&underglow_tick, K_NO_WAIT, K_MSEC(1000 / ANIMATION_FPS));
-    } else {
-        k_timer_stop(&underglow_tick);
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-        underglow_ext_power_set(false);
-#else
-        k_work_submit_to_queue(zmk_workqueue_lowprio_work_q(), &underglow_off_work);
-#endif
+    if (!atomic_get(&underglow_suspended)) {
+        k_work_reschedule_for_queue(zmk_workqueue_lowprio_work_q(), &underglow_work, K_NO_WAIT);
     }
-
     return 0;
+}
+
+int zmk_rgb_underglow_suspend(void) {
+    if (!led_strip) {
+        return 0;
+    }
+    atomic_set(&underglow_suspended, 1);
+    struct k_work_sync sync;
+    k_work_cancel_delayable_sync(&underglow_work, &sync);
+    atomic_clear(&underglow_force_off);
+    return underglow_clear();
+}
+
+void zmk_rgb_underglow_resume(void) {
+    atomic_clear(&underglow_suspended);
+    zmk_rgb_underglow_apply_state();
+}
+
+void zmk_rgb_underglow_get_fade(bool *enabled, uint32_t *duration_ms) {
+    uint32_t config = atomic_get(&fade_config);
+    *enabled = config & FADE_ENABLED;
+    *duration_ms = config >> 1;
+}
+
+int zmk_rgb_underglow_set_fade(bool enabled, uint32_t duration_ms) {
+    if (duration_ms < 1 || duration_ms > ZMK_RGB_UNDERGLOW_FADE_MAX_MS) {
+        return -EINVAL;
+    }
+    uint16_t config = (duration_ms << 1) | enabled;
+#if IS_ENABLED(CONFIG_SETTINGS)
+    if (config != atomic_get(&fade_config)) {
+        int err = settings_save_one("rgb/underglow/fade", &config, sizeof(config));
+        if (err < 0) {
+            return err;
+        }
+    }
+#endif
+    atomic_set(&fade_config, config);
+    return zmk_rgb_underglow_apply_state();
+}
+
+int zmk_rgb_underglow_reset_fade(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    int err = settings_delete("rgb/underglow/fade");
+    if (err < 0 && err != -ENOENT) {
+        return err;
+    }
+#endif
+    atomic_set(&fade_config, FADE_DEFAULT);
+    return zmk_rgb_underglow_apply_state();
 }
 
 int zmk_rgb_underglow_on(void) {
@@ -852,6 +980,16 @@ int zmk_rgb_underglow_off(void) {
     if (rc != 0) {
         return rc;
     }
+    return zmk_rgb_underglow_save_state();
+}
+
+int zmk_rgb_underglow_off_now(void) {
+    if (!led_strip) {
+        return -ENODEV;
+    }
+    state.on = false;
+    atomic_set(&underglow_force_off, 1);
+    zmk_rgb_underglow_apply_state();
     return zmk_rgb_underglow_save_state();
 }
 

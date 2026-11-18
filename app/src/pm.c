@@ -16,6 +16,7 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/endpoints.h>
+#include <zmk/rgb_underglow.h>
 #include <zmk/watchdog.h>
 
 // Reimplement some of the device work from Zephyr PM to work with the new `sys_poweroff` API.
@@ -35,6 +36,12 @@ int zmk_pm_suspend_devices(void) {
     devc = z_device_get_all_static(&devs);
 
     zmk_num_susp = 0;
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    int err = zmk_rgb_underglow_suspend();
+    if (err < 0) {
+        return err;
+    }
+#endif
 
     for (const struct device *dev = devs + devc - 1; dev >= devs; dev--) {
         int ret;
@@ -71,6 +78,9 @@ void zmk_pm_resume_devices(void) {
     }
 
     zmk_num_susp = 0;
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    zmk_rgb_underglow_resume();
+#endif
 }
 #endif /* !CONFIG_PM_DEVICE_RUNTIME_EXCLUSIVE */
 #endif /* CONFIG_ZMK_PM_DEVICE_SUSPEND_RESUME */

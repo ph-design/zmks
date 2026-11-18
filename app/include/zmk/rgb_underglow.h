@@ -6,6 +6,11 @@
 
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#define ZMK_RGB_UNDERGLOW_FADE_MAX_MS 1000
+
 struct zmk_led_hsb {
     uint16_t h;
     uint8_t s;
@@ -17,6 +22,12 @@ int zmk_rgb_underglow_get_state(bool *state);
 int zmk_rgb_underglow_apply_state(void);
 int zmk_rgb_underglow_on(void);
 int zmk_rgb_underglow_off(void);
+int zmk_rgb_underglow_off_now(void);
+int zmk_rgb_underglow_suspend(void);
+void zmk_rgb_underglow_resume(void);
+void zmk_rgb_underglow_get_fade(bool *enabled, uint32_t *duration_ms);
+int zmk_rgb_underglow_set_fade(bool enabled, uint32_t duration_ms);
+int zmk_rgb_underglow_reset_fade(void);
 int zmk_rgb_underglow_transient_on(void);
 int zmk_rgb_underglow_transient_off(void);
 int zmk_rgb_underglow_cycle_effect(int direction);

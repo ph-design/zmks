@@ -127,8 +127,7 @@ static int zmk_battery_update(const struct device *battery) {
             zmk_rgb_underglow_get_state(&rgb_on);
             if (rgb_on) {
                 LOG_WRN("Battery low (%d%%), turning off RGB underglow", state_of_charge.val1);
-                zmk_rgb_underglow_off();
-                rgb_off_by_low_bat = true;
+                rgb_off_by_low_bat = zmk_rgb_underglow_off_now() == 0;
             }
         }
     } else {
