@@ -36,7 +36,7 @@ manifest:
       path: modules/lib/nanopb
       remote: zmkfirmware
     - name: zmk-studio-messages
-      revision: 2174ac0c0f23bf9867be05e9b9d229e18fa37f57
+      revision: v0.3_lts
       path: modules/msgs/zmk-studio-messages
       remote: ph-design
   self:
