@@ -19,6 +19,10 @@ LOG_MODULE_REGISTER(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 #include <zmk/endpoints.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/endpoint_changed.h>
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+#include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/usb.h>
+#endif
 #include <zmk/studio/core.h>
 #include <zmk/studio/rpc.h>
 
@@ -70,192 +74,335 @@ static zmk_studio_Response handle_request(const zmk_studio_Request *req) {
 }
 
 RING_BUF_DECLARE(rpc_rx_buf, CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE);
+RING_BUF_DECLARE(rpc_tx_buf, CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE);
 
 static K_SEM_DEFINE(rpc_rx_sem, 0, 1);
-
-static enum studio_framing_state rpc_framing_state;
+static K_SEM_DEFINE(rpc_tx_sem, 0, 1);
 
 static K_MUTEX_DEFINE(rpc_transport_mutex);
+static K_MUTEX_DEFINE(rpc_tx_mutex);
 static struct zmk_rpc_transport *selected_transport;
+static struct k_spinlock rpc_io_lock;
+static uint32_t rpc_session;
+static atomic_t failed_tx_session;
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+static uint32_t selected_usb_connection;
+#endif
 
-struct ring_buf *zmk_rpc_get_rx_buf(void) { return &rpc_rx_buf; }
+struct rpc_read_context {
+    uint32_t session;
+    enum studio_framing_state framing;
+};
 
-void zmk_rpc_rx_notify(void) { k_sem_give(&rpc_rx_sem); }
+static uint32_t current_session_locked(void) {
+    if (!selected_transport) {
+        return 0;
+    }
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    if (selected_transport->transport == ZMK_TRANSPORT_USB &&
+        selected_usb_connection != zmk_usb_get_connection_id()) {
+        return 0;
+    }
+#endif
+    return rpc_session;
+}
 
-static bool rpc_read_cb(pb_istream_t *stream, uint8_t *buf, size_t count) {
-    uint32_t write_offset = 0;
+static bool session_matches_locked(enum zmk_transport transport, uint32_t session) {
+    return session && session == current_session_locked() &&
+           selected_transport->transport == transport;
+}
 
-    do {
-        uint8_t *buffer;
-        uint32_t len = ring_buf_get_claim(&rpc_rx_buf, &buffer, count - write_offset);
-
-        if (len > 0) {
-            for (int i = 0; i < len; i++) {
-                if (studio_framing_process_byte(&rpc_framing_state, buffer[i])) {
-                    buf[write_offset++] = buffer[i];
-                }
-            }
-        } else {
-            k_sem_take(&rpc_rx_sem, K_FOREVER);
-        }
-
-        ring_buf_get_finish(&rpc_rx_buf, len);
-    } while (write_offset < count && rpc_framing_state != FRAMING_STATE_EOF);
-
-    if (rpc_framing_state == FRAMING_STATE_EOF) {
-        stream->bytes_left = 0;
-        return false;
-    } else {
-        return true;
+void zmk_rpc_transport_fail(enum zmk_transport transport, uint32_t session) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    bool failed = session_matches_locked(transport, session);
+    if (failed) {
+        atomic_set(&failed_tx_session, session);
+        ring_buf_reset(&rpc_tx_buf);
+        ring_buf_reset(&rpc_rx_buf);
+    }
+    k_spin_unlock(&rpc_io_lock, key);
+    if (failed) {
+        k_sem_give(&rpc_tx_sem);
+        k_sem_give(&rpc_rx_sem);
     }
 }
 
-static pb_istream_t pb_istream_for_rx_ring_buf() {
-    pb_istream_t stream = {&rpc_read_cb, NULL, SIZE_MAX};
-    return stream;
+static uint32_t current_session(void) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    uint32_t session = current_session_locked();
+    k_spin_unlock(&rpc_io_lock, key);
+    return session;
 }
 
-RING_BUF_DECLARE(rpc_tx_buf, CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE);
+static bool session_is_current(uint32_t session) {
+    return session && session == current_session();
+}
 
-struct ring_buf *zmk_rpc_get_tx_buf(void) { return &rpc_tx_buf; }
+uint32_t zmk_rpc_transport_session(enum zmk_transport transport) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    uint32_t session = session_matches_locked(transport, rpc_session) ? rpc_session : 0;
+    k_spin_unlock(&rpc_io_lock, key);
+    return session;
+}
 
-static bool rpc_tx_buffer_write(pb_ostream_t *stream, const uint8_t *buf, size_t count) {
-    void *user_data = stream->state;
-    size_t written = 0;
+bool zmk_rpc_is_transport_active(enum zmk_transport transport) {
+    return zmk_rpc_transport_session(transport) != 0;
+}
 
-    bool escape_byte_already_written = false;
-    do {
-        uint32_t write_idx = 0;
+uint32_t zmk_rpc_rx_write(enum zmk_transport transport, uint32_t session,
+                          const uint8_t *data, size_t size) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    uint32_t written = 0;
+    if (session_matches_locked(transport, session) &&
+        session != (uint32_t)atomic_get(&failed_tx_session) &&
+        size <= ring_buf_space_get(&rpc_rx_buf)) {
+        written = ring_buf_put(&rpc_rx_buf, data, size);
+    }
+    k_spin_unlock(&rpc_io_lock, key);
+    if (written) {
+        k_sem_give(&rpc_rx_sem);
+    }
+    return written;
+}
 
-        uint8_t *write_buf;
-        uint32_t claim_len = ring_buf_put_claim(&rpc_tx_buf, &write_buf, count - written);
+uint32_t zmk_rpc_tx_read(enum zmk_transport transport, uint32_t session,
+                         uint8_t *data, size_t size) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    uint32_t read = 0;
+    if (session_matches_locked(transport, session) &&
+        session != (uint32_t)atomic_get(&failed_tx_session)) {
+        read = ring_buf_get(&rpc_tx_buf, data, size);
+    }
+    k_spin_unlock(&rpc_io_lock, key);
+    if (read) {
+        k_sem_give(&rpc_tx_sem);
+    }
+    return read;
+}
 
-        if (claim_len == 0) {
+static uint32_t reset_session_locked(void) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    selected_transport = NULL;
+    atomic_clear(&failed_tx_session);
+    if (++rpc_session == 0) {
+        rpc_session++;
+    }
+    ring_buf_reset(&rpc_rx_buf);
+    ring_buf_reset(&rpc_tx_buf);
+    uint32_t session = rpc_session;
+    k_spin_unlock(&rpc_io_lock, key);
+    k_sem_give(&rpc_rx_sem);
+    k_sem_give(&rpc_tx_sem);
+    return session;
+}
+
+static void publish_transport_locked(struct zmk_rpc_transport *transport) {
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    selected_transport = transport;
+    k_spin_unlock(&rpc_io_lock, key);
+}
+
+uint32_t zmk_rpc_transport_reset(enum zmk_transport transport, uint32_t session) {
+    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+    if (!session || zmk_rpc_transport_session(transport) != session) {
+        k_mutex_unlock(&rpc_transport_mutex);
+        return 0;
+    }
+    struct zmk_rpc_transport *selected = selected_transport;
+    uint32_t next = reset_session_locked();
+    publish_transport_locked(selected);
+#if IS_ENABLED(CONFIG_ZMK_STUDIO_LOCK_ON_DISCONNECT)
+    zmk_studio_core_lock();
+#endif
+    k_mutex_unlock(&rpc_transport_mutex);
+    return next;
+}
+
+static bool rpc_read_cb(pb_istream_t *stream, uint8_t *buf, size_t count) {
+    struct rpc_read_context *context = stream->state;
+    size_t offset = 0;
+
+    while (offset < count) {
+        uint8_t byte;
+        k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+        uint32_t session = current_session_locked();
+        if (context->session && (context->session != session ||
+                                 session == (uint32_t)atomic_get(&failed_tx_session))) {
+            k_spin_unlock(&rpc_io_lock, key);
+            stream->bytes_left = 0;
             return false;
         }
-
-        int escapes_written = 0;
-        for (int i = 0; i < claim_len && write_idx < claim_len; i++) {
-            uint8_t b = buf[written + i];
-            switch (b) {
-            case FRAMING_EOF:
-            case FRAMING_ESC:
-            case FRAMING_SOF:
-                // Care to be taken. We may need to write the escape byte,
-                // but that's the last available spot for this claim, so we track
-                // if the escape has already been written in the previous iteration
-                // of our loop.
-                if (!escape_byte_already_written) {
-                    escapes_written++;
-                    write_buf[write_idx++] = FRAMING_ESC;
-                    escape_byte_already_written = true;
-                    if (write_idx >= claim_len) {
-                        LOG_WRN("Skipping on, no room to write escape and real byte");
-                        continue;
-                    }
-                }
-            default:
-                write_buf[write_idx++] = b;
-                escape_byte_already_written = false;
-                break;
-            }
+        uint32_t len = session ? ring_buf_get(&rpc_rx_buf, &byte, 1) : 0;
+        if (len) {
+            context->session = session;
         }
-
-        ring_buf_put_finish(&rpc_tx_buf, write_idx);
-
-        written += (write_idx - escapes_written);
-
-        selected_transport->tx_notify(&rpc_tx_buf, write_idx, false, user_data);
-    } while (written < count);
-
+        k_spin_unlock(&rpc_io_lock, key);
+        if (!len) {
+            k_sem_take(&rpc_rx_sem, K_FOREVER);
+            continue;
+        }
+        if (studio_framing_process_byte(&context->framing, byte)) {
+            if (buf) {
+                buf[offset] = byte;
+            }
+            offset++;
+        }
+        if (context->framing == FRAMING_STATE_EOF) {
+            stream->bytes_left = 0;
+            return false;
+        }
+    }
     return true;
 }
 
-static pb_ostream_t pb_ostream_for_tx_buf(void *user_data) {
-    pb_ostream_t stream = {&rpc_tx_buffer_write, (void *)user_data, SIZE_MAX, 0};
-    return stream;
+static bool needs_escape(uint8_t byte) {
+    return byte == FRAMING_SOF || byte == FRAMING_EOF || byte == FRAMING_ESC;
+}
+
+BUILD_ASSERT(CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE >= 2);
+
+struct rpc_write_context {
+    const struct zmk_rpc_transport *transport;
+    uint32_t session;
+    bool notification;
+    bool started;
+    int err;
+    size_t len;
+    uint8_t data[MIN(64, CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE)];
+};
+
+static int rpc_tx_flush(struct rpc_write_context *context) {
+    int64_t deadline = k_uptime_get() + 5000;
+    for (;;) {
+        k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+        if (context->session != current_session_locked() ||
+            context->session == (uint32_t)atomic_get(&failed_tx_session)) {
+            k_spin_unlock(&rpc_io_lock, key);
+            return -ENOTCONN;
+        }
+        if (context->len <= ring_buf_space_get(&rpc_tx_buf)) {
+            ring_buf_put(&rpc_tx_buf, context->data, context->len);
+            k_spin_unlock(&rpc_io_lock, key);
+            context->started = true;
+            context->len = 0;
+            if (context->transport->tx_notify) {
+                context->transport->tx_notify(context->session);
+            }
+            return 0;
+        }
+        k_spin_unlock(&rpc_io_lock, key);
+        if (context->notification) {
+            return -EAGAIN;
+        }
+        int64_t remaining = deadline - k_uptime_get();
+        if (remaining <= 0 || k_sem_take(&rpc_tx_sem, K_MSEC(remaining))) {
+            return -ETIMEDOUT;
+        }
+    }
+}
+
+static bool rpc_tx_buffer_write(pb_ostream_t *stream, const uint8_t *buf, size_t count) {
+    struct rpc_write_context *context = stream->state;
+    for (size_t i = 0; i < count; i++) {
+        bool escape = needs_escape(buf[i]);
+        if (context->len + (escape ? 2 : 1) > sizeof(context->data)) {
+            context->err = rpc_tx_flush(context);
+            if (context->err) {
+                return false;
+            }
+        }
+        if (escape) {
+            context->data[context->len++] = FRAMING_ESC;
+        }
+        context->data[context->len++] = buf[i];
+    }
+    return true;
 }
 
 static bool escaped_size(pb_ostream_t *stream, const uint8_t *buf, size_t count) {
     size_t *size = stream->state;
     for (size_t i = 0; i < count; i++) {
-        *size += (buf[i] == FRAMING_SOF || buf[i] == FRAMING_EOF || buf[i] == FRAMING_ESC) ? 2 : 1;
+        *size += needs_escape(buf[i]) ? 2 : 1;
     }
     return true;
 }
 
-static int send_response(const zmk_studio_Response *resp) {
+static int send_response(const zmk_studio_Response *resp, uint32_t session) {
     bool notification = resp->which_type == zmk_studio_Response_notification_tag;
-    int64_t deadline = k_uptime_get() + 500;
-    for (;;) {
-        if (k_mutex_lock(&rpc_transport_mutex, K_NO_WAIT)) {
-            if (notification || k_uptime_get() >= deadline)
-                return -EAGAIN;
-            k_msleep(1);
-            continue;
-        }
-        int rc = 0;
-        if (!selected_transport) {
-            k_mutex_unlock(&rpc_transport_mutex);
-            return -ENOTCONN;
-        }
+    if (k_mutex_lock(&rpc_tx_mutex, notification ? K_NO_WAIT : K_MSEC(500))) {
+        return -EAGAIN;
+    }
+
+    struct rpc_write_context context = {
+        .session = session,
+        .notification = notification,
+        .data = {FRAMING_SOF},
+        .len = 1,
+    };
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    if (session && session == current_session_locked()) {
+        context.transport = selected_transport;
+    }
+    size_t free = ring_buf_space_get(&rpc_tx_buf);
+    size_t queued = ring_buf_size_get(&rpc_tx_buf);
+    k_spin_unlock(&rpc_io_lock, key);
+
+    int err;
+    if (!context.transport || session == (uint32_t)atomic_get(&failed_tx_session)) {
+        err = -ENOTCONN;
+        goto done;
+    }
+    if (notification) {
         size_t size = 2;
         pb_ostream_t sizing = {escaped_size, &size, SIZE_MAX, 0};
-        if (!pb_encode(&sizing, &zmk_studio_Response_msg, resp))
-            rc = -EINVAL;
-        else if (size > ring_buf_capacity_get(&rpc_tx_buf))
-            rc = -EMSGSIZE;
-        else if (size > ring_buf_space_get(&rpc_tx_buf) ||
-                 (notification && ring_buf_size_get(&rpc_tx_buf) > 128))
-            rc = -EAGAIN;
-        else {
-            void *data =
-                selected_transport->tx_user_data ? selected_transport->tx_user_data() : NULL;
-            pb_ostream_t stream = pb_ostream_for_tx_buf(data);
-            uint8_t byte = FRAMING_SOF;
-            ring_buf_put(&rpc_tx_buf, &byte, 1);
-            bool ok = pb_encode(&stream, &zmk_studio_Response_msg, resp);
-            byte = FRAMING_EOF;
-            ring_buf_put(&rpc_tx_buf, &byte, 1);
-            selected_transport->tx_notify(&rpc_tx_buf, 1, true, data);
-            if (!ok)
-                rc = -EINVAL;
+        if (!pb_encode(&sizing, &zmk_studio_Response_msg, resp)) {
+            err = -EINVAL;
+            goto done;
         }
-        k_mutex_unlock(&rpc_transport_mutex);
-        if (rc != -EAGAIN || notification || k_uptime_get() >= deadline)
-            return rc;
-        k_msleep(1);
+        if (size > free || queued > 128) {
+            err = -EAGAIN;
+            goto done;
+        }
     }
-}
 
-#if IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_2G4)
-uint32_t zmk_rpc_radio_tx_read(uint8_t *data, uint32_t size) {
-    if (k_mutex_lock(&rpc_transport_mutex, K_NO_WAIT))
-        return 0;
-    uint32_t n = 0;
-    if (selected_transport && selected_transport->transport == ZMK_TRANSPORT_2G4)
-        n = ring_buf_get(&rpc_tx_buf, data, size);
-    k_mutex_unlock(&rpc_transport_mutex);
-    return n;
-}
-#endif
+    pb_ostream_t stream = {rpc_tx_buffer_write, &context, SIZE_MAX, 0};
+    if (!pb_encode(&stream, &zmk_studio_Response_msg, resp)) {
+        err = context.err ? context.err : -EINVAL;
+        goto done;
+    }
+    if (context.len == sizeof(context.data)) {
+        err = rpc_tx_flush(&context);
+        if (err) {
+            goto done;
+        }
+    }
+    context.data[context.len++] = FRAMING_EOF;
+    err = rpc_tx_flush(&context);
 
+done:
+    if (err && context.started && session_is_current(session)) {
+        zmk_rpc_transport_fail(context.transport->transport, session);
+        LOG_ERR("Incomplete RPC frame");
+    }
+    k_mutex_unlock(&rpc_tx_mutex);
+    return err;
+}
 
 static void rpc_main(void) {
     for (;;) {
-        pb_istream_t stream = pb_istream_for_rx_ring_buf();
+        struct rpc_read_context context = {.framing = FRAMING_STATE_IDLE};
+        pb_istream_t stream = {&rpc_read_cb, &context, SIZE_MAX};
         zmk_studio_Request req = zmk_studio_Request_init_zero;
 #if IS_ENABLED(CONFIG_THREAD_ANALYZER)
         thread_analyzer_print();
 #endif // IS_ENABLED(CONFIG_THREAD_ANALYZER)
         bool status = pb_decode(&stream, &zmk_studio_Request_msg, &req);
 
-        rpc_framing_state = FRAMING_STATE_IDLE;
-
-        if (status) {
+        if (status && session_is_current(context.session) &&
+            context.session != (uint32_t)atomic_get(&failed_tx_session)) {
             zmk_studio_Response resp = handle_request(&req);
 
-            int err = send_response(&resp);
+            int err = send_response(&resp, context.session);
 #if IS_ENABLED(CONFIG_THREAD_ANALYZER)
             thread_analyzer_print();
 #endif // IS_ENABLED(CONFIG_THREAD_ANALYZER)
@@ -263,7 +410,7 @@ static void rpc_main(void) {
                 LOG_ERR("Failed to send the RPC response %d", err);
             }
         } else {
-            LOG_DBG("Decode failed");
+            LOG_DBG("Decode failed or RPC session changed");
         }
     }
 }
@@ -273,38 +420,63 @@ K_THREAD_DEFINE(studio_rpc_thread, CONFIG_ZMK_STUDIO_RPC_THREAD_STACK_SIZE, rpc_
 
 static void refresh_selected_transport(void) {
     enum zmk_transport transport = zmk_endpoints_selected().transport;
-
-    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
-
-    if (selected_transport && selected_transport->transport == transport) {
-        goto exit_refresh;
+    struct zmk_rpc_transport *next = NULL;
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    uint32_t usb_connection = zmk_usb_get_connection_id();
+    bool usb_ready = zmk_usb_is_hid_ready() &&
+                     usb_connection == zmk_usb_get_connection_id();
+    if (usb_ready) {
+        transport = ZMK_TRANSPORT_USB;
     }
-
-    if (selected_transport) {
-        if (selected_transport->rx_stop) {
-            selected_transport->rx_stop();
-        }
-        selected_transport = NULL;
-#if IS_ENABLED(CONFIG_ZMK_STUDIO_LOCK_ON_DISCONNECT)
-        zmk_studio_core_lock();
 #endif
-    }
-
     STRUCT_SECTION_FOREACH(zmk_rpc_transport, t) {
         if (t->transport == transport) {
-            selected_transport = t;
-            if (selected_transport->rx_start) {
-                selected_transport->rx_start();
-            }
+            next = t;
             break;
         }
     }
-
-    if (!selected_transport) {
-        LOG_WRN("Failed to select a transport!");
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    if (transport == ZMK_TRANSPORT_USB && !usb_ready) {
+        next = NULL;
     }
+#endif
 
-exit_refresh:
+    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+    bool unchanged = selected_transport == next;
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    if (next && transport == ZMK_TRANSPORT_USB) {
+        unchanged &= selected_usb_connection == usb_connection;
+    }
+#endif
+    if (unchanged) {
+        k_mutex_unlock(&rpc_transport_mutex);
+        return;
+    }
+    if (selected_transport && selected_transport->rx_stop) {
+        selected_transport->rx_stop();
+    }
+    bool had_transport = selected_transport != NULL;
+    reset_session_locked();
+#if IS_ENABLED(CONFIG_ZMK_STUDIO_LOCK_ON_DISCONNECT)
+    if (had_transport) {
+        zmk_studio_core_lock();
+    }
+#else
+    ARG_UNUSED(had_transport);
+#endif
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
+    selected_usb_connection = usb_connection;
+    k_spin_unlock(&rpc_io_lock, key);
+#endif
+    if (next) {
+        publish_transport_locked(next);
+        int ret = next->rx_start ? next->rx_start() : 0;
+        if (ret < 0) {
+            LOG_ERR("Failed to start RPC transport: %d", ret);
+            reset_session_locked();
+        }
+    }
     k_mutex_unlock(&rpc_transport_mutex);
 }
 
@@ -343,8 +515,11 @@ static int zmk_rpc_init(void) {
 SYS_INIT(zmk_rpc_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 static int studio_rpc_listener_cb(const zmk_event_t *eh) {
-    struct zmk_endpoint_changed *ep_changed = as_zmk_endpoint_changed(eh);
-    if (ep_changed) {
+    bool transport_changed = as_zmk_endpoint_changed(eh) != NULL;
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+    transport_changed |= as_zmk_usb_conn_state_changed(eh) != NULL;
+#endif
+    if (transport_changed) {
         refresh_selected_transport();
         return ZMK_EV_EVENT_BUBBLE;
     }
@@ -354,7 +529,7 @@ static int studio_rpc_listener_cb(const zmk_event_t *eh) {
         zmk_studio_Response resp = zmk_studio_Response_init_zero;
         resp.which_type = zmk_studio_Response_notification_tag;
         resp.type.notification = rpc_notify->notification;
-        send_response(&resp);
+        send_response(&resp, current_session());
         return ZMK_EV_EVENT_BUBBLE;
     }
 
@@ -373,4 +548,7 @@ static int studio_rpc_listener_cb(const zmk_event_t *eh) {
 
 ZMK_LISTENER(studio_rpc, studio_rpc_listener_cb);
 ZMK_SUBSCRIPTION(studio_rpc, zmk_endpoint_changed);
+#if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
+ZMK_SUBSCRIPTION(studio_rpc, zmk_usb_conn_state_changed);
+#endif
 ZMK_SUBSCRIPTION(studio_rpc, zmk_studio_rpc_notification);

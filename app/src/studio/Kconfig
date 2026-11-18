@@ -78,6 +78,18 @@ config ZMK_STUDIO_TRANSPORT_BLE
     depends on ZMK_BLE
     default y
 
+config ZMK_STUDIO_TRANSPORT_BLE_TX_STACK_SIZE
+    int "BLE Transport TX Stack Size"
+    depends on ZMK_STUDIO_TRANSPORT_BLE
+    default SYSTEM_WORKQUEUE_STACK_SIZE
+    help
+      Stack size for the dedicated Studio BLE transmission work queue.
+
+config ZMK_STUDIO_TRANSPORT_BLE_TX_PRIORITY
+    int "BLE Transport TX Thread Priority"
+    depends on ZMK_STUDIO_TRANSPORT_BLE
+    default 10
+
 config BT_CONN_TX_MAX
     default 64 if ZMK_STUDIO_TRANSPORT_BLE
 

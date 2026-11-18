@@ -20,85 +20,71 @@ LOG_MODULE_DECLARE(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 static struct k_spinlock uart_state_lock;
-static bool uart_selected;
-
-static void tx_notify(struct ring_buf *tx_ring_buf, size_t written, bool msg_done,
-                      void *user_data) {
-    if (!uart_selected)
-        return;
-    if (msg_done || (ring_buf_size_get(tx_ring_buf) > (ring_buf_capacity_get(tx_ring_buf) / 2))) {
+static uint32_t uart_session;
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
-        uart_irq_tx_enable(uart_dev);
-#else
-        struct ring_buf *tx_buf = zmk_rpc_get_tx_buf();
-        uint8_t *buf;
-        uint32_t claim_len;
-        while ((claim_len = ring_buf_get_claim(tx_buf, &buf, tx_buf->size)) > 0) {
-            for (int i = 0; i < claim_len; i++) {
-                uart_poll_out(uart_dev, buf[i]);
-            }
-
-            ring_buf_get_finish(tx_buf, claim_len);
-        }
+static uint8_t tx_pending[64];
+static size_t tx_pending_len, tx_pending_offset;
 #endif
+
+static void tx_notify(uint32_t session) {
+#if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
+    k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
+    if (uart_session == session) {
+        uart_irq_tx_enable(uart_dev);
     }
+    k_spin_unlock(&uart_state_lock, key);
+#else
+    uint8_t bytes[64];
+    uint32_t len;
+    while ((len = zmk_rpc_tx_read(ZMK_TRANSPORT_USB, session, bytes, sizeof(bytes)))) {
+        for (uint32_t i = 0; i < len; i++) {
+            uart_poll_out(uart_dev, bytes[i]);
+        }
+    }
+#endif
 }
 
 #if !IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
-
 static void uart_rx_main(void) {
     for (;;) {
-        uint8_t *buf;
-        struct ring_buf *ring_buf = zmk_rpc_get_rx_buf();
-        uint32_t claim_len = ring_buf_put_claim(ring_buf, &buf, 1);
-
-        if (claim_len < 1) {
-            LOG_WRN("NO CLAIM ABLE TO BE HAD");
-            k_sleep(K_MSEC(1));
-            continue;
-        }
-
-        if (uart_poll_in(uart_dev, buf) < 0) {
-            ring_buf_put_finish(ring_buf, 0);
-            k_sleep(K_MSEC(1));
+        uint32_t session = zmk_rpc_transport_session(ZMK_TRANSPORT_USB);
+        uint8_t byte;
+        if (session && uart_poll_in(uart_dev, &byte) == 0) {
+            zmk_rpc_rx_write(ZMK_TRANSPORT_USB, session, &byte, 1);
         } else {
-            ring_buf_put_finish(ring_buf, 1);
-            zmk_rpc_rx_notify();
+            k_sleep(K_MSEC(session ? 1 : 10));
         }
     }
 }
 
 K_THREAD_DEFINE(uart_transport_read_thread, CONFIG_ZMK_STUDIO_TRANSPORT_UART_RX_STACK_SIZE,
                 uart_rx_main, NULL, NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, 0);
-
 #endif
 
-static int start_rx() {
+static int start_rx(void) {
     k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
-    uart_selected = true;
-    k_spin_unlock(&uart_state_lock, key);
+    uart_session = zmk_rpc_transport_session(ZMK_TRANSPORT_USB);
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
+    tx_pending_len = tx_pending_offset = 0;
     uart_irq_rx_enable(uart_dev);
-#else
-    k_thread_resume(uart_transport_read_thread);
 #endif
+    k_spin_unlock(&uart_state_lock, key);
     return 0;
 }
 
 static int stop_rx(void) {
     k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
-    uart_selected = false;
+    uart_session = 0;
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
     uart_irq_rx_disable(uart_dev);
     uart_irq_tx_disable(uart_dev);
-#else
-    k_thread_suspend(uart_transport_read_thread);
+    tx_pending_len = tx_pending_offset = 0;
 #endif
     k_spin_unlock(&uart_state_lock, key);
     return 0;
 }
 
-ZMK_RPC_TRANSPORT(uart, ZMK_TRANSPORT_USB, start_rx, stop_rx, NULL, tx_notify);
+ZMK_RPC_TRANSPORT(uart, ZMK_TRANSPORT_USB, start_rx, stop_rx, tx_notify);
 
 #if IS_ENABLED(CONFIG_UART_INTERRUPT_DRIVEN)
 
@@ -112,46 +98,38 @@ static void serial_cb(const struct device *dev, void *user_data) {
     }
 
     k_spinlock_key_t key = k_spin_lock(&uart_state_lock);
-    if (!uart_selected) {
+    uint32_t session = uart_session;
+    if (!session || session != zmk_rpc_transport_session(ZMK_TRANSPORT_USB)) {
         uart_irq_rx_disable(uart_dev);
         uart_irq_tx_disable(uart_dev);
         k_spin_unlock(&uart_state_lock, key);
         return;
     }
     if (uart_irq_rx_ready(uart_dev)) {
-        /* read until FIFO empty */
-        uint32_t last_read = 0, len = 0;
-        struct ring_buf *buf = zmk_rpc_get_rx_buf();
+        uint8_t bytes[64];
+        int len;
         do {
-            uint8_t *buffer;
-            len = ring_buf_put_claim(buf, &buffer, buf->size);
-            if (len > 0) {
-                last_read = uart_fifo_read(uart_dev, buffer, len);
-
-                ring_buf_put_finish(buf, last_read);
-            } else {
-                LOG_ERR("Dropping incoming RPC byte, insufficient room in the RX buffer. Bump "
-                        "CONFIG_ZMK_STUDIO_RPC_RX_BUF_SIZE.");
-                uint8_t dummy;
-                last_read = uart_fifo_read(uart_dev, &dummy, 1);
+            len = uart_fifo_read(uart_dev, bytes, sizeof(bytes));
+            if (len > 0 && zmk_rpc_rx_write(ZMK_TRANSPORT_USB, session, bytes, len) != (uint32_t)len) {
+                LOG_WRN("Dropping RPC input: session changed or RX buffer full");
             }
-        } while (last_read && last_read == len);
-
-        zmk_rpc_rx_notify();
+        } while (len == (int)sizeof(bytes));
     }
-
     if (uart_irq_tx_ready(uart_dev)) {
-        struct ring_buf *tx_buf = zmk_rpc_get_tx_buf();
-        uint8_t *buf;
-        uint32_t claim_len = ring_buf_get_claim(tx_buf, &buf, 64);
-        if (claim_len) {
-            int sent = uart_fifo_fill(uart_dev, buf, claim_len);
-            ring_buf_get_finish(tx_buf, sent > 0 ? MIN((uint32_t)sent, claim_len) : 0);
+        if (tx_pending_offset == tx_pending_len) {
+            tx_pending_offset = 0;
+            tx_pending_len = zmk_rpc_tx_read(ZMK_TRANSPORT_USB, session,
+                                             tx_pending, sizeof(tx_pending));
         }
-        /* CDC completion schedules the next callback. Never wait on the USB
-         * workqueue that must drain the FIFO we are trying to fill. */
-        if (ring_buf_is_empty(tx_buf))
+        if (!tx_pending_len) {
             uart_irq_tx_disable(uart_dev);
+        } else {
+            int sent = uart_fifo_fill(uart_dev, tx_pending + tx_pending_offset,
+                                     tx_pending_len - tx_pending_offset);
+            if (sent > 0) {
+                tx_pending_offset += MIN((size_t)sent, tx_pending_len - tx_pending_offset);
+            }
+        }
     }
     k_spin_unlock(&uart_state_lock, key);
 }

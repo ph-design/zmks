@@ -6,6 +6,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/init.h>
+#include <zephyr/sys/atomic.h>
 
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/class/usb_hid.h>
@@ -21,6 +22,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static enum usb_dc_status_code usb_status = USB_DC_UNKNOWN;
 static bool is_configured;
+static atomic_t usb_connection_id;
+
+uint32_t zmk_usb_get_connection_id(void) { return (uint32_t)atomic_get(&usb_connection_id); }
 
 static void raise_usb_status_changed_event(struct k_work *_work) {
     raise_zmk_usb_conn_state_changed(
@@ -66,6 +70,9 @@ void usb_status_cb(enum usb_dc_status_code status, const uint8_t *params) {
         zmk_usb_hid_set_protocol(HID_PROTOCOL_REPORT);
     }
 #endif
+    if (status == USB_DC_RESET || status == USB_DC_DISCONNECTED) {
+        atomic_inc(&usb_connection_id);
+    }
     usb_status = status;
     if (zmk_usb_get_conn_state() == ZMK_USB_CONN_HID) {
         is_configured |= usb_status == USB_DC_CONFIGURED;

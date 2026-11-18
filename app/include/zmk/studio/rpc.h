@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <zephyr/kernel.h>
 #include <zephyr/sys/iterable_sections.h>
 #include <zephyr/sys/ring_buffer.h>
 
@@ -198,15 +199,12 @@ struct zmk_rpc_event_mapper {
 
 typedef int (*zmk_rpc_rx_start_stop_func)(void);
 
-typedef void (*zmk_rpc_tx_buffer_notify_func)(struct ring_buf *buf, size_t added, bool message_done,
-                                              void *user_data);
-typedef void *(*zmk_rpc_tx_user_data_func)(void);
+typedef void (*zmk_rpc_tx_notify_func)(uint32_t session);
 
 struct zmk_rpc_transport {
     enum zmk_transport transport;
 
-    zmk_rpc_tx_user_data_func tx_user_data;
-    zmk_rpc_tx_buffer_notify_func tx_notify;
+    zmk_rpc_tx_notify_func tx_notify;
     zmk_rpc_rx_start_stop_func rx_start;
     zmk_rpc_rx_start_stop_func rx_stop;
 };
@@ -215,20 +213,19 @@ zmk_studio_Response zmk_rpc_subsystem_delegate_to_subs(const struct zmk_rpc_subs
                                                        const zmk_studio_Request *req,
                                                        uint8_t which_req);
 
-struct ring_buf *zmk_rpc_get_tx_buf(void);
-struct ring_buf *zmk_rpc_get_rx_buf(void);
-void zmk_rpc_rx_notify(void);
+uint32_t zmk_rpc_transport_session(enum zmk_transport transport);
+bool zmk_rpc_is_transport_active(enum zmk_transport transport);
+uint32_t zmk_rpc_rx_write(enum zmk_transport transport, uint32_t session,
+                          const uint8_t *data, size_t size);
+uint32_t zmk_rpc_tx_read(enum zmk_transport transport, uint32_t session,
+                         uint8_t *data, size_t size);
+uint32_t zmk_rpc_transport_reset(enum zmk_transport transport, uint32_t session);
+void zmk_rpc_transport_fail(enum zmk_transport transport, uint32_t session);
 
-#define ZMK_RPC_TRANSPORT(name, _transport, _rx_start, _rx_stop, _tx_user_data, _tx_notify)        \
+#define ZMK_RPC_TRANSPORT(name, _transport, _rx_start, _rx_stop, _tx_notify)                       \
     STRUCT_SECTION_ITERABLE(zmk_rpc_transport, name) = {                                           \
         .transport = _transport,                                                                   \
         .rx_start = _rx_start,                                                                     \
         .rx_stop = _rx_stop,                                                                       \
-        .tx_user_data = _tx_user_data,                                                             \
         .tx_notify = _tx_notify,                                                                   \
     }
-
-#if IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_2G4)
-/* Read only while the radio owns the current RPC transport. */
-uint32_t zmk_rpc_radio_tx_read(uint8_t *data, uint32_t size);
-#endif
