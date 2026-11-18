@@ -39,8 +39,7 @@ static int wdt_channel = -1;
 static atomic_t tx_stall_armed;
 static volatile uint32_t tx_stall_start;
 static volatile uint32_t tx_last_fail_at;
-// Watermark refreshed whenever the BLE report queues are observed empty.
-static int64_t tx_idle_since;
+static atomic_t tx_last_progress_at;
 
 #define TX_FAIL_FRESH_MS 5000
 
@@ -54,12 +53,14 @@ void zmk_wdt_feed_now(void) {
     }
 }
 
-void zmk_wdt_note_tx_ok(void) { atomic_set(&tx_stall_armed, 0); }
+void zmk_wdt_note_tx_ok(void) {
+    atomic_set(&tx_stall_armed, 0);
+    atomic_set(&tx_last_progress_at, k_uptime_get_32());
+}
 
 void zmk_wdt_note_tx_fail(void) {
     uint32_t now = k_uptime_get_32();
-    if (!atomic_get(&tx_stall_armed) ||
-        now - tx_stall_start > CONFIG_ZMK_UNRESPONSE_FIX_TX_STALL_MS) {
+    if (!atomic_get(&tx_stall_armed) || now - tx_last_fail_at >= TX_FAIL_FRESH_MS) {
         tx_stall_start = now;
         atomic_set(&tx_stall_armed, 1);
     }
@@ -106,10 +107,10 @@ static bool hog_reports_pending(void) { return false; }
 
 // Feeding
 static void wdt_feed_handler(struct k_work *work) {
-    int64_t now = k_uptime_get();
-
-    if (!hog_reports_pending()) {
-        tx_idle_since = now;
+    uint32_t now = k_uptime_get_32();
+    bool ble_pending = ble_selected_and_connected() && hog_reports_pending();
+    if (!ble_pending) {
+        atomic_set(&tx_last_progress_at, now);
     }
 
     bool active = zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE;
@@ -120,13 +121,13 @@ static void wdt_feed_handler(struct k_work *work) {
 
     // Only judge while the user is actually using the keyboard and a link exists.
     if (active && transport_link_up()) {
-        uint32_t now32 = k_uptime_get_32();
         // Sends keep failing and none has gone out for the whole window.
-        bool stalled = atomic_get(&tx_stall_armed) && now32 - tx_last_fail_at < TX_FAIL_FRESH_MS &&
-                       now32 - tx_stall_start > CONFIG_ZMK_UNRESPONSE_FIX_TX_STALL_MS;
-        // Reports are stuck in the BLE queues: the hog work queue is wedged.
-        stalled = stalled || (ble_selected_and_connected() && hog_reports_pending() &&
-                              now - tx_idle_since > CONFIG_ZMK_UNRESPONSE_FIX_TX_STALL_MS);
+        bool stalled = atomic_get(&tx_stall_armed) && now - tx_last_fail_at < TX_FAIL_FRESH_MS &&
+                       now - tx_stall_start > CONFIG_ZMK_UNRESPONSE_FIX_TX_STALL_MS;
+        uint32_t last_progress = (uint32_t)atomic_get(&tx_last_progress_at);
+        stalled = stalled ||
+                  (ble_pending && (int32_t)(now - last_progress) >
+                                      CONFIG_ZMK_UNRESPONSE_FIX_TX_STALL_MS);
 
         if (stalled) {
             // Stop feeding and let the WDT reset us.
@@ -168,7 +169,7 @@ static int zmk_wdt_init(void) {
 
     // Feed immediately: nothing feeds the WDT between reset and this init during boot
     zmk_wdt_feed_now();
-    tx_idle_since = k_uptime_get();
+    atomic_set(&tx_last_progress_at, k_uptime_get_32());
     k_work_schedule(&wdt_feed_work, K_SECONDS(1));
     return 0;
 }
