@@ -5,16 +5,60 @@
  */
 
 #include <zephyr/drivers/hwinfo.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <pb_encode.h>
+#include <dt-bindings/zmk/reset.h>
+#if IS_ENABLED(CONFIG_ZMK_USB)
+#include <zmk/usb.h>
+#endif
 #include <zmk/studio/core.h>
 #include <zmk/studio/rpc.h>
 
 ZMK_RPC_SUBSYSTEM(core)
 
 #define CORE_RESPONSE(type, ...) ZMK_RPC_RESPONSE(core, type, __VA_ARGS__)
+
+static bool bootloader_supported(void) {
+    return IS_ENABLED(CONFIG_NRF_STORE_REBOOT_TYPE_GPREGRET) &&
+           IS_ENABLED(CONFIG_BUILD_OUTPUT_UF2) && IS_ENABLED(CONFIG_ZMK_USB) &&
+           IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART);
+}
+
+static bool bootloader_usb_ready(void) {
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    return bootloader_supported() && zmk_usb_is_hid_ready() &&
+           zmk_rpc_is_transport_active(ZMK_TRANSPORT_USB) &&
+           zmk_studio_core_get_lock_state() == ZMK_STUDIO_CORE_LOCK_STATE_UNLOCKED;
+#else
+    return false;
+#endif
+}
+
+#if IS_ENABLED(CONFIG_ZMK_USB)
+static uint32_t bootloader_usb_connection;
+#endif
+
+static void bootloader_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
+
+#if IS_ENABLED(CONFIG_ZMK_USB)
+    if (bootloader_usb_ready() &&
+        bootloader_usb_connection == zmk_usb_get_connection_id()) {
+        sys_reboot(RST_UF2);
+    }
+#endif
+}
+
+static K_WORK_DEFINE(bootloader_work, bootloader_work_cb);
+
+static void bootloader_confirmed(bool confirmed) {
+    if (confirmed) {
+        k_work_submit(&bootloader_work);
+    }
+}
 
 static bool encode_device_info_name(pb_ostream_t *stream, const pb_field_t *field,
                                     void *const *arg) {
@@ -48,6 +92,7 @@ zmk_studio_Response get_device_info(const zmk_studio_Request *req) {
     LOG_DBG("");
     zmk_core_GetDeviceInfoResponse resp = zmk_core_GetDeviceInfoResponse_init_zero;
 
+    resp.bootloader_version = bootloader_supported() ? 1 : 0;
     resp.name.funcs.encode = encode_device_info_name;
 #if IS_ENABLED(CONFIG_HWINFO)
     resp.serial_number.funcs.encode = encode_device_info_serial_number;
@@ -75,6 +120,26 @@ zmk_studio_Response reset_settings(const zmk_studio_Request *req) {
 
     return CORE_RESPONSE(reset_settings, true);
 }
+
+zmk_studio_Response enter_bootloader(const zmk_studio_Request *req) {
+    bool accepted = req->subsystem.core.request_type.enter_bootloader &&
+                    bootloader_usb_ready() && zmk_rpc_request_is_transport(ZMK_TRANSPORT_USB);
+
+    if (accepted) {
+#if IS_ENABLED(CONFIG_ZMK_USB)
+        if (!k_work_is_pending(&bootloader_work)) {
+            bootloader_usb_connection = zmk_usb_get_connection_id();
+            accepted = zmk_rpc_defer_action(req, bootloader_confirmed);
+        } else {
+            accepted = false;
+        }
+#endif
+    }
+
+    return CORE_RESPONSE(enter_bootloader, accepted);
+}
+
+ZMK_RPC_SUBSYSTEM_HANDLER(core, enter_bootloader, ZMK_STUDIO_RPC_HANDLER_SECURED);
 
 ZMK_RPC_SUBSYSTEM_HANDLER(core, get_device_info, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(core, get_lock_state, ZMK_STUDIO_RPC_HANDLER_UNSECURED);
