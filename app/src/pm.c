@@ -88,6 +88,21 @@ const struct device *soft_off_wakeup_sources[] = {
 
 #endif
 
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+static bool soft_off_wakeup_source(const struct device *dev) {
+#if HAS_WAKERS
+    for (size_t i = 0; i < ARRAY_SIZE(soft_off_wakeup_sources); i++) {
+        if (soft_off_wakeup_sources[i] == dev) {
+            return true;
+        }
+    }
+#else
+    ARG_UNUSED(dev);
+#endif
+    return false;
+}
+#endif
+
 int zmk_pm_soft_off(void) {
     // The WDT keeps its remaining timeout frozen across System OFF on nRF52 and
     // resumes counting during boot after wake, so reload it before going off.
@@ -104,39 +119,49 @@ int zmk_pm_soft_off(void) {
 #endif
 
     device_count = z_device_get_all_static(&devs);
+    bool wakeup_enabled[device_count];
 
-    // There may be some matrix/direct kscan devices that would be used for wakeup
-    // from normal "inactive goes to sleep" behavior, so disable them as wakeup devices
-    // and then suspend them so we're ready to take over setting up our system
-    // and then putting it into an off state.
-    LOG_DBG("soft-on-off pressed cb: suspend devices");
-    for (int i = 0; i < device_count; i++) {
+    for (size_t i = 0; i < device_count; i++) {
         const struct device *dev = &devs[i];
-
-        if (pm_device_wakeup_is_enabled(dev)) {
-            pm_device_wakeup_enable(dev, false);
+        wakeup_enabled[i] = pm_device_wakeup_is_enabled(dev);
+        bool wake = soft_off_wakeup_source(dev);
+        if (wake != wakeup_enabled[i]) {
+            pm_device_wakeup_enable(dev, wake);
         }
-        pm_device_action_run(dev, PM_DEVICE_ACTION_SUSPEND);
     }
 #endif // IS_ENABLED(CONFIG_PM_DEVICE)
 
+    int err = 0;
 #if HAS_WAKERS
-    for (int i = 0; i < ARRAY_SIZE(soft_off_wakeup_sources); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(soft_off_wakeup_sources); i++) {
         const struct device *dev = soft_off_wakeup_sources[i];
-        pm_device_wakeup_enable(dev, true);
-        pm_device_action_run(dev, PM_DEVICE_ACTION_RESUME);
+        err = pm_device_action_run(dev, PM_DEVICE_ACTION_RESUME);
+        if (err < 0 && err != -EALREADY && err != -ENOSYS && err != -ENOTSUP) {
+            goto restore_wakeup;
+        }
     }
 #endif // HAS_WAKERS
 
-    int err = zmk_pm_suspend_devices();
+    err = zmk_pm_suspend_devices();
     if (err < 0) {
         zmk_pm_resume_devices();
-        return err;
+        goto restore_wakeup;
     }
 
     LOG_DBG("soft-off: go to sleep");
+    zmk_wdt_feed_now();
     sys_poweroff();
     return 0;
+
+restore_wakeup:
+#if IS_ENABLED(CONFIG_PM_DEVICE)
+    for (size_t i = 0; i < device_count; i++) {
+        if (wakeup_enabled[i] != pm_device_wakeup_is_enabled(&devs[i])) {
+            pm_device_wakeup_enable(&devs[i], wakeup_enabled[i]);
+        }
+    }
+#endif
+    return err;
 }
 
 #endif // IS_ENABLED(CONFIG_ZMK_PM_SOFT_OFF)

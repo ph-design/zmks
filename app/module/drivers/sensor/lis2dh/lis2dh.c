@@ -516,8 +516,8 @@ static int lis2dh_pm_action(const struct device *dev, enum pm_device_action acti
             return 0;
         }
         if (lis2dh_bus_is_suspended(dev)) {
-            LOG_WRN("I2C bus already suspended, skipping LIS2DH suspend write");
-            return 0;
+            LOG_ERR("cannot suspend LIS2DH while its bus is suspended");
+            return -EIO;
         }
 
         status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CTRL1, LIS2DH_SUSPEND);
