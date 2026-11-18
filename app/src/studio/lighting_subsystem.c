@@ -86,6 +86,8 @@ static zmk_studio_Response get_rgb_underglow_state(const zmk_studio_Request *req
     resp.speed = (uint32_t)zmk_rgb_underglow_get_speed();
     resp.effect_count = (uint32_t)zmk_rgb_underglow_get_effect_count();
     resp.effect_names.funcs.encode = encode_effect_names;
+    resp.has_fade = true;
+    zmk_rgb_underglow_get_fade(&resp.fade.enabled, &resp.fade.duration_ms);
 
     return LIGHTING_RESPONSE(get_rgb_underglow_state, resp);
 }
@@ -117,6 +119,10 @@ static zmk_studio_Response set_rgb_underglow_state(const zmk_studio_Request *req
         break;
     case zmk_lighting_SetRgbUnderglowStateRequest_speed_tag:
         ret = zmk_rgb_underglow_set_speed((int)set_req->field.speed);
+        break;
+    case zmk_lighting_SetRgbUnderglowStateRequest_fade_tag:
+        ret = zmk_rgb_underglow_set_fade(set_req->field.fade.enabled,
+                                         set_req->field.fade.duration_ms);
         break;
     default:
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
@@ -425,6 +431,10 @@ static int lighting_settings_reset(void) {
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
     int ret = settings_delete("rgb/underglow/state");
     if (ret < 0 && ret != -ENOENT) {
+        return ret;
+    }
+    ret = zmk_rgb_underglow_reset_fade();
+    if (ret < 0) {
         return ret;
     }
 #endif
