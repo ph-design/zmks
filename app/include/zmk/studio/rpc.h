@@ -221,6 +221,8 @@ uint32_t zmk_rpc_tx_read(enum zmk_transport transport, uint32_t session,
                          uint8_t *data, size_t size);
 uint32_t zmk_rpc_transport_reset(enum zmk_transport transport, uint32_t session);
 void zmk_rpc_transport_fail(enum zmk_transport transport, uint32_t session);
+bool zmk_rpc_request_is_transport(enum zmk_transport transport);
+bool zmk_rpc_defer_action(const zmk_studio_Request *request, void (*complete)(bool));
 
 #define ZMK_RPC_TRANSPORT(name, _transport, _rx_start, _rx_stop, _tx_notify)                       \
     STRUCT_SECTION_ITERABLE(zmk_rpc_transport, name) = {                                           \

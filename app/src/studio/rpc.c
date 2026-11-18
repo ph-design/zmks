@@ -89,6 +89,38 @@ static atomic_t failed_tx_session;
 static uint32_t selected_usb_connection;
 #endif
 
+// RPC thread state
+static uint32_t request_session;
+static void (*response_action)(bool);
+#define RPC_ACTION_TIMEOUT_MS 15000
+
+static struct {
+    void (*complete)(bool);
+    uint32_t session;
+    uint32_t token;
+    int64_t deadline;
+} pending_action;
+static uint32_t next_action_token;
+
+static void finish_action_locked(bool confirmed) {
+    if (pending_action.complete) {
+        void (*complete)(bool) = pending_action.complete;
+        pending_action.complete = NULL;
+        complete(confirmed);
+    }
+}
+
+static void expire_action(struct k_work *work) {
+    ARG_UNUSED(work);
+    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+    if (pending_action.complete && k_uptime_get() >= pending_action.deadline) {
+        finish_action_locked(false);
+    }
+    k_mutex_unlock(&rpc_transport_mutex);
+}
+
+static K_WORK_DELAYABLE_DEFINE(action_timeout, expire_action);
+
 struct rpc_read_context {
     uint32_t session;
     enum studio_framing_state framing;
@@ -149,6 +181,10 @@ bool zmk_rpc_is_transport_active(enum zmk_transport transport) {
     return zmk_rpc_transport_session(transport) != 0;
 }
 
+bool zmk_rpc_request_is_transport(enum zmk_transport transport) {
+    return request_session && request_session == zmk_rpc_transport_session(transport);
+}
+
 uint32_t zmk_rpc_rx_write(enum zmk_transport transport, uint32_t session,
                           const uint8_t *data, size_t size) {
     k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
@@ -181,6 +217,8 @@ uint32_t zmk_rpc_tx_read(enum zmk_transport transport, uint32_t session,
 }
 
 static uint32_t reset_session_locked(void) {
+    k_work_cancel_delayable(&action_timeout);
+    finish_action_locked(false);
     k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
     selected_transport = NULL;
     atomic_clear(&failed_tx_session);
@@ -388,6 +426,65 @@ done:
     return err;
 }
 
+bool zmk_rpc_defer_action(const zmk_studio_Request *request, void (*complete)(bool)) {
+    if (!request->supports_action_confirmation || response_action) {
+        return false;
+    }
+    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+    bool available = !pending_action.complete && session_is_current(request_session);
+    if (available) {
+        response_action = complete;
+    }
+    k_mutex_unlock(&rpc_transport_mutex);
+    return available;
+}
+
+static void confirm_action(const zmk_studio_Request *request, uint32_t session) {
+    k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+    if (pending_action.complete && pending_action.session == session &&
+        session != (uint32_t)atomic_get(&failed_tx_session) &&
+        pending_action.token == request->subsystem.confirm_action &&
+        k_uptime_get() < pending_action.deadline && session_is_current(session) &&
+        zmk_studio_core_get_lock_state() == ZMK_STUDIO_CORE_LOCK_STATE_UNLOCKED) {
+        k_work_cancel_delayable(&action_timeout);
+        finish_action_locked(true);
+    }
+    k_mutex_unlock(&rpc_transport_mutex);
+}
+
+static int send_request_response(zmk_studio_Response *resp, uint32_t session) {
+    bool deferred = response_action != NULL;
+    if (deferred) {
+        k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+        if (!session_is_current(session)) {
+            response_action(false);
+            k_mutex_unlock(&rpc_transport_mutex);
+            return -ENOTCONN;
+        }
+        if (++next_action_token == 0) {
+            next_action_token++;
+        }
+        pending_action.complete = response_action;
+        pending_action.session = session;
+        pending_action.token = next_action_token;
+        pending_action.deadline = k_uptime_get() + RPC_ACTION_TIMEOUT_MS;
+        resp->type.request_response.action_token = pending_action.token;
+        k_work_reschedule(&action_timeout, K_MSEC(RPC_ACTION_TIMEOUT_MS));
+        k_mutex_unlock(&rpc_transport_mutex);
+    }
+
+    int err = send_response(resp, session);
+    if (err && deferred) {
+        k_mutex_lock(&rpc_transport_mutex, K_FOREVER);
+        if (pending_action.session == session) {
+            k_work_cancel_delayable(&action_timeout);
+            finish_action_locked(false);
+        }
+        k_mutex_unlock(&rpc_transport_mutex);
+    }
+    return err;
+}
+
 static void rpc_main(void) {
     for (;;) {
         struct rpc_read_context context = {.framing = FRAMING_STATE_IDLE};
@@ -400,9 +497,15 @@ static void rpc_main(void) {
 
         if (status && session_is_current(context.session) &&
             context.session != (uint32_t)atomic_get(&failed_tx_session)) {
+            if (req.which_subsystem == zmk_studio_Request_confirm_action_tag) {
+                confirm_action(&req, context.session);
+                continue;
+            }
+            request_session = context.session;
+            response_action = NULL;
             zmk_studio_Response resp = handle_request(&req);
 
-            int err = send_response(&resp, context.session);
+            int err = send_request_response(&resp, context.session);
 #if IS_ENABLED(CONFIG_THREAD_ANALYZER)
             thread_analyzer_print();
 #endif // IS_ENABLED(CONFIG_THREAD_ANALYZER)
@@ -412,6 +515,7 @@ static void rpc_main(void) {
         } else {
             LOG_DBG("Decode failed or RPC session changed");
         }
+        request_session = 0;
     }
 }
 

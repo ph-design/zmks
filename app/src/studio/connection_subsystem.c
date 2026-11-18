@@ -33,9 +33,6 @@ ZMK_RPC_SUBSYSTEM(connection)
 
 #define CONNECTION_RESPONSE(type, ...) ZMK_RPC_RESPONSE(connection, type, __VA_ARGS__)
 
-// Reply before switching transports.
-#define CONN_SWITCH_DELAY_MS 200
-
 // Notify after endpoint listeners update the RPC transport.
 #define CONN_NOTIFY_DELAY_MS 40
 
@@ -217,7 +214,19 @@ static bool conn_any_ble_bonded(void) {
 }
 #endif
 
-static zmk_connection_SwitchResult conn_schedule(enum conn_action action,
+static void conn_action_confirmed(bool confirmed) {
+    if (confirmed) {
+        k_sem_give(&conn_switch_sem);
+        return;
+    }
+    k_mutex_lock(&conn_lock, K_FOREVER);
+    conn_pending_action = CONN_ACTION_NONE;
+    conn_switch_in_flight = false;
+    k_mutex_unlock(&conn_lock);
+}
+
+static zmk_connection_SwitchResult conn_schedule(const zmk_studio_Request *request,
+                                                enum conn_action action,
                                                 enum zmk_transport target, uint32_t profile,
                                                 zmk_connection_State *snapshot) {
     zmk_connection_SwitchResult result = zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_OK;
@@ -288,13 +297,23 @@ static zmk_connection_SwitchResult conn_schedule(enum conn_action action,
         break;
     }
 
+    if (!request->supports_action_confirmation) {
+        result = zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_UNSUPPORTED;
+        goto unlock;
+    }
+
     conn_pending_action = action;
     conn_pending_transport = target;
     conn_pending_profile = profile;
     conn_switch_in_flight = true;
-    k_sem_give(&conn_switch_sem);
-
-    result = zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_PENDING;
+    snapshot->radio_switching = true;
+    k_mutex_unlock(&conn_lock);
+    if (!zmk_rpc_defer_action(request, conn_action_confirmed)) {
+        conn_action_confirmed(false);
+        snapshot->radio_switching = false;
+        return zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_BUSY;
+    }
+    return zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_PENDING;
 
 unlock:
     k_mutex_unlock(&conn_lock);
@@ -384,7 +403,6 @@ static void conn_switch_thread_fn(void *p1, void *p2, void *p3) {
 
     for (;;) {
         k_sem_take(&conn_switch_sem, K_FOREVER);
-        k_msleep(CONN_SWITCH_DELAY_MS);
         conn_switch_run();
     }
 }
@@ -409,7 +427,7 @@ static zmk_studio_Response select_transport(const zmk_studio_Request *req) {
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
     zmk_connection_SwitchResult result = conn_schedule(
-        CONN_ACTION_SELECT_TRANSPORT, transport_from_proto(select->transport), 0, &snapshot);
+        req, CONN_ACTION_SELECT_TRANSPORT, transport_from_proto(select->transport), 0, &snapshot);
 
     zmk_connection_SelectTransportResponse resp = zmk_connection_SelectTransportResponse_init_zero;
     resp.result = result;
@@ -424,7 +442,7 @@ static zmk_studio_Response toggle_transport(const zmk_studio_Request *req) {
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
     zmk_connection_SwitchResult result = conn_schedule(
-        CONN_ACTION_TOGGLE_TRANSPORT, zmk_endpoints_next_transport(), 0, &snapshot);
+        req, CONN_ACTION_TOGGLE_TRANSPORT, zmk_endpoints_next_transport(), 0, &snapshot);
 
     zmk_connection_SelectTransportResponse resp = zmk_connection_SelectTransportResponse_init_zero;
     resp.result = result;
@@ -441,7 +459,7 @@ static zmk_studio_Response select_ble_profile(const zmk_studio_Request *req) {
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
     zmk_connection_SwitchResult result =
-        conn_schedule(CONN_ACTION_SELECT_PROFILE, ZMK_TRANSPORT_USB, index, &snapshot);
+        conn_schedule(req, CONN_ACTION_SELECT_PROFILE, ZMK_TRANSPORT_USB, index, &snapshot);
 
     if (result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_OK &&
         result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_PENDING) {
@@ -459,7 +477,7 @@ static zmk_studio_Response unpair_ble_profile(const zmk_studio_Request *req) {
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
     zmk_connection_SwitchResult result =
-        conn_schedule(CONN_ACTION_UNPAIR_PROFILE, ZMK_TRANSPORT_USB, index, &snapshot);
+        conn_schedule(req, CONN_ACTION_UNPAIR_PROFILE, ZMK_TRANSPORT_USB, index, &snapshot);
 
     if (result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_OK &&
         result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_PENDING) {
@@ -475,7 +493,7 @@ static zmk_studio_Response unpair_all_ble(const zmk_studio_Request *req) {
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
     zmk_connection_SwitchResult result =
-        conn_schedule(CONN_ACTION_UNPAIR_ALL, ZMK_TRANSPORT_USB, 0, &snapshot);
+        conn_schedule(req, CONN_ACTION_UNPAIR_ALL, ZMK_TRANSPORT_USB, 0, &snapshot);
 
     if (result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_OK &&
         result != zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_PENDING) {
