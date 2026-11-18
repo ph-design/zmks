@@ -20,6 +20,7 @@
 #endif
 
 void zmk_ble_clear_bonds(void);
+void zmk_ble_clear_profile_bonds(uint8_t index);
 int zmk_ble_prof_next(void);
 int zmk_ble_prof_prev(void);
 int zmk_ble_prof_select(uint8_t index);

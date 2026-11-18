@@ -353,29 +353,25 @@ int zmk_endpoints_select_transport(enum zmk_transport transport) {
 
 static bool is_usb_ready(void);
 
-int zmk_endpoints_toggle_transport(void) {
-    enum zmk_transport new_transport;
-
+enum zmk_transport zmk_endpoints_next_transport(void) {
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
     switch (current_instance.transport) {
     case ZMK_TRANSPORT_USB:
-        new_transport = ZMK_TRANSPORT_BLE;
-        break;
+        return ZMK_TRANSPORT_BLE;
     case ZMK_TRANSPORT_BLE:
-        new_transport = ZMK_TRANSPORT_2G4;
-        break;
+        return ZMK_TRANSPORT_2G4;
     default:
-        new_transport = is_usb_ready() ? ZMK_TRANSPORT_USB : ZMK_TRANSPORT_BLE;
-        break;
+        return is_usb_ready() ? ZMK_TRANSPORT_USB : ZMK_TRANSPORT_BLE;
     }
 #elif IS_ENABLED(CONFIG_ZMK_2G4)
-    new_transport =
-        (preferred_transport == ZMK_TRANSPORT_USB) ? ZMK_TRANSPORT_2G4 : ZMK_TRANSPORT_USB;
+    return preferred_transport == ZMK_TRANSPORT_USB ? ZMK_TRANSPORT_2G4 : ZMK_TRANSPORT_USB;
 #else
-    new_transport =
-        (preferred_transport == ZMK_TRANSPORT_USB) ? ZMK_TRANSPORT_BLE : ZMK_TRANSPORT_USB;
+    return preferred_transport == ZMK_TRANSPORT_USB ? ZMK_TRANSPORT_BLE : ZMK_TRANSPORT_USB;
 #endif
-    return zmk_endpoints_select_transport(new_transport);
+}
+
+int zmk_endpoints_toggle_transport(void) {
+    return zmk_endpoints_select_transport(zmk_endpoints_next_transport());
 }
 
 struct zmk_endpoint_instance zmk_endpoints_selected(void) { return current_instance; }

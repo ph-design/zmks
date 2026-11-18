@@ -106,7 +106,7 @@ bool zmk_ble_profile_is_open(uint8_t index) {
 
 bool zmk_ble_is_advertising(void) { return ble_started && advertising_status != ZMK_ADV_NONE; }
 
-void set_profile_address(uint8_t index, const bt_addr_le_t *addr) {
+static void set_profile_address(uint8_t index, const bt_addr_le_t *addr) {
     char setting_name[17];
     char addr_str[BT_ADDR_LE_STR_LEN];
 
@@ -232,17 +232,31 @@ K_WORK_DEFINE(update_advertising_work, update_advertising_callback);
 
 static void clear_profile_bond(uint8_t profile) {
     if (bt_addr_le_cmp(&profiles[profile].peer, BT_ADDR_LE_ANY)) {
-        bt_unpair(BT_ID_DEFAULT, &profiles[profile].peer);
+        int err = bt_unpair(BT_ID_DEFAULT, &profiles[profile].peer);
+        if (err < 0 && err != -ENOENT) {
+            LOG_WRN("bt_unpair for profile %d failed: %d", profile, err);
+        }
         set_profile_address(profile, BT_ADDR_LE_ANY);
+    }
+}
+
+void zmk_ble_clear_profile_bonds(uint8_t index) {
+    if (index >= ZMK_BLE_PROFILE_COUNT) {
+        LOG_WRN("Invalid BLE profile %d", index);
+        return;
+    }
+
+    clear_profile_bond(index);
+    if (index == active_profile) {
+        update_advertising();
     }
 }
 
 void zmk_ble_clear_bonds(void) {
     LOG_DBG("zmk_ble_clear_bonds()");
 
-    clear_profile_bond(active_profile);
-    update_advertising();
-};
+    zmk_ble_clear_profile_bonds(active_profile);
+}
 
 void zmk_ble_clear_all_bonds(void) {
     LOG_DBG("zmk_ble_clear_all_bonds()");

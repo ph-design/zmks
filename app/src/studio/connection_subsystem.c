@@ -22,7 +22,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/ble.h>
 #include <zmk/events/ble_active_profile_changed.h>
 #include <zephyr/bluetooth/addr.h>
-#include <zephyr/bluetooth/conn.h>
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
@@ -206,25 +205,6 @@ static zmk_connection_SwitchResult conn_check_target(enum zmk_transport target) 
     return zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_INVALID;
 }
 
-static enum zmk_transport conn_next_toggle_target(void) {
-    enum zmk_transport current = zmk_endpoints_selected().transport;
-
-#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-    switch (current) {
-    case ZMK_TRANSPORT_USB:
-        return ZMK_TRANSPORT_BLE;
-    case ZMK_TRANSPORT_BLE:
-        return ZMK_TRANSPORT_2G4;
-    default:
-        return conn_usb_ready() ? ZMK_TRANSPORT_USB : ZMK_TRANSPORT_BLE;
-    }
-#elif IS_ENABLED(CONFIG_ZMK_2G4)
-    return (current == ZMK_TRANSPORT_2G4) ? ZMK_TRANSPORT_USB : ZMK_TRANSPORT_2G4;
-#else
-    return (current == ZMK_TRANSPORT_USB) ? ZMK_TRANSPORT_BLE : ZMK_TRANSPORT_USB;
-#endif
-}
-
 #if IS_ENABLED(CONFIG_ZMK_BLE)
 static bool conn_any_ble_bonded(void) {
     for (int i = 0; i < ZMK_BLE_PROFILE_COUNT; i++) {
@@ -253,10 +233,7 @@ static zmk_connection_SwitchResult conn_schedule(enum conn_action action,
 
     switch (action) {
     case CONN_ACTION_SELECT_TRANSPORT:
-        result = conn_check_target(target);
-        break;
     case CONN_ACTION_TOGGLE_TRANSPORT:
-        target = conn_next_toggle_target();
         result = conn_check_target(target);
         break;
     case CONN_ACTION_SELECT_PROFILE:
@@ -286,7 +263,6 @@ static zmk_connection_SwitchResult conn_schedule(enum conn_action action,
     // Selecting the current target succeeds without a radio switch.
     switch (action) {
     case CONN_ACTION_SELECT_TRANSPORT:
-    case CONN_ACTION_TOGGLE_TRANSPORT:
         if (target == zmk_endpoints_selected().transport) {
             goto unlock;
         }
@@ -324,41 +300,6 @@ unlock:
     k_mutex_unlock(&conn_lock);
     return result;
 }
-
-#if IS_ENABLED(CONFIG_ZMK_BLE)
-// ble.c keeps its single-profile bond helper private.
-extern void set_profile_address(uint8_t index, const bt_addr_le_t *addr);
-
-static void conn_unpair_profile(uint32_t profile) {
-    uint8_t index = (uint8_t)profile;
-
-    if (zmk_ble_profile_is_open(index)) {
-        return;
-    }
-
-    if (index == (uint8_t)zmk_ble_active_profile_index()) {
-        zmk_ble_clear_bonds();
-        return;
-    }
-
-    bt_addr_le_t *peer = zmk_ble_profile_address(index);
-    if (!peer) {
-        LOG_WRN("No address slot for BLE profile %d", index);
-        return;
-    }
-
-    int err = bt_unpair(BT_ID_DEFAULT, peer);
-    if (err < 0 && err != -ENOENT) {
-        LOG_WRN("bt_unpair for profile %d failed: %d", index, err);
-    }
-
-    set_profile_address(index, BT_ADDR_LE_ANY);
-}
-
-static void conn_unpair_all(void) {
-    zmk_ble_clear_all_bonds();
-}
-#endif
 
 static void fill_state_changed(zmk_connection_StateChanged *changed) {
     k_mutex_lock(&conn_lock, K_FOREVER);
@@ -401,28 +342,24 @@ static void conn_switch_run(void) {
 
     switch (action) {
     case CONN_ACTION_SELECT_TRANSPORT:
-    case CONN_ACTION_TOGGLE_TRANSPORT: {
-#if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
-        if (action == CONN_ACTION_TOGGLE_TRANSPORT) {
-            transport = conn_next_toggle_target();
+    case CONN_ACTION_TOGGLE_TRANSPORT:
+        if (conn_check_target(transport) !=
+            zmk_connection_SwitchResult_ZMK_CONNECTION_SWITCH_RESULT_OK) {
+            err = -EAGAIN;
+            break;
         }
-#endif
-        if (action == CONN_ACTION_TOGGLE_TRANSPORT) {
-            err = zmk_endpoints_toggle_transport();
-        } else {
-            err = zmk_endpoints_select_transport(transport);
-        }
+        err = zmk_endpoints_select_transport(transport);
         break;
-    }
+
 #if IS_ENABLED(CONFIG_ZMK_BLE)
     case CONN_ACTION_SELECT_PROFILE:
         err = zmk_ble_prof_select((uint8_t)profile);
         break;
     case CONN_ACTION_UNPAIR_PROFILE:
-        conn_unpair_profile(profile);
+        zmk_ble_clear_profile_bonds((uint8_t)profile);
         break;
     case CONN_ACTION_UNPAIR_ALL:
-        conn_unpair_all();
+        zmk_ble_clear_all_bonds();
         break;
 #endif
     default:
@@ -440,7 +377,6 @@ static void conn_switch_run(void) {
     raise_state_changed();
 }
 
-// Run queued actions after the RPC reply.
 static void conn_switch_thread_fn(void *p1, void *p2, void *p3) {
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
@@ -487,8 +423,8 @@ static zmk_studio_Response toggle_transport(const zmk_studio_Request *req) {
     LOG_DBG("");
 
     zmk_connection_State snapshot = zmk_connection_State_init_zero;
-    zmk_connection_SwitchResult result =
-        conn_schedule(CONN_ACTION_TOGGLE_TRANSPORT, ZMK_TRANSPORT_USB, 0, &snapshot);
+    zmk_connection_SwitchResult result = conn_schedule(
+        CONN_ACTION_TOGGLE_TRANSPORT, zmk_endpoints_next_transport(), 0, &snapshot);
 
     zmk_connection_SelectTransportResponse resp = zmk_connection_SelectTransportResponse_init_zero;
     resp.result = result;

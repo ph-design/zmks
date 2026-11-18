@@ -69,6 +69,7 @@ int zmk_endpoint_instance_to_index(struct zmk_endpoint_instance endpoint);
  * not available, a different one may automatically be selected.)
  */
 int zmk_endpoints_select_transport(enum zmk_transport transport);
+enum zmk_transport zmk_endpoints_next_transport(void);
 int zmk_endpoints_toggle_transport(void);
 
 #if IS_ENABLED(CONFIG_ZMK_BLE) && IS_ENABLED(CONFIG_ZMK_2G4)
