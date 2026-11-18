@@ -242,6 +242,13 @@ static int switch_radio_transport(enum zmk_transport new_transport) {
             goto done;
         }
     } else if (new_transport == ZMK_TRANSPORT_BLE) {
+        if (current_instance.transport == ZMK_TRANSPORT_2G4 && zmk_2g4_is_ready()) {
+            int err = zmk_2g4_wait_for_tx();
+            zmk_endpoints_clear_current();
+            if (zmk_2g4_wait_for_tx() || err) {
+                LOG_WRN("2.4G TX did not drain before switching to BLE");
+            }
+        }
         zmk_2g4_stop();
         ret = zmk_ble_start();
         if (ret) {
@@ -394,7 +401,8 @@ static int send_keyboard_report(void) {
     case ZMK_TRANSPORT_BLE: {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
         struct zmk_hid_keyboard_report *keyboard_report = zmk_hid_get_keyboard_report();
-        int err = zmk_hog_send_keyboard_report(&keyboard_report->body);
+        int err = zmk_hog_send_keyboard_report(current_instance.ble.profile_index,
+                                                &keyboard_report->body);
         if (err) {
             LOG_ERR("FAILED TO SEND OVER HOG: %d", err);
         }
@@ -441,7 +449,8 @@ static int send_consumer_report(void) {
     case ZMK_TRANSPORT_BLE: {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
         struct zmk_hid_consumer_report *consumer_report = zmk_hid_get_consumer_report();
-        int err = zmk_hog_send_consumer_report(&consumer_report->body);
+        int err = zmk_hog_send_consumer_report(current_instance.ble.profile_index,
+                                                &consumer_report->body);
         if (err) {
             LOG_ERR("FAILED TO SEND OVER HOG: %d", err);
         }
@@ -504,7 +513,8 @@ int zmk_endpoints_send_mouse_report() {
     case ZMK_TRANSPORT_BLE: {
 #if IS_ENABLED(CONFIG_ZMK_BLE)
         struct zmk_hid_mouse_report *mouse_report = zmk_hid_get_mouse_report();
-        int err = zmk_hog_send_mouse_report(&mouse_report->body);
+        int err = zmk_hog_send_mouse_report(current_instance.ble.profile_index,
+                                                &mouse_report->body);
         if (err) {
             LOG_ERR("FAILED TO SEND OVER HOG: %d", err);
         }
@@ -696,24 +706,50 @@ enum zmk_transport zmk_endpoints_preferred_wireless_transport(void) {
 }
 #endif
 
-void zmk_endpoints_clear_current(void) {
+static void clear_hid_reports(void) {
     zmk_hid_keyboard_clear();
     zmk_hid_consumer_clear();
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
     zmk_hid_mouse_clear();
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)
+}
 
+void zmk_endpoints_clear_current(void) {
+    clear_hid_reports();
     zmk_endpoints_send_report(HID_USAGE_KEY);
     zmk_endpoints_send_report(HID_USAGE_CONSUMER);
+#if IS_ENABLED(CONFIG_ZMK_POINTING)
+    zmk_endpoints_send_mouse_report();
+#endif
+}
+
+static bool current_endpoint_is_ready(void) {
+    switch (current_instance.transport) {
+    case ZMK_TRANSPORT_USB:
+        return is_usb_ready();
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+    case ZMK_TRANSPORT_BLE:
+        return zmk_ble_profile_is_connected(current_instance.ble.profile_index);
+#endif
+#if IS_ENABLED(CONFIG_ZMK_2G4)
+    case ZMK_TRANSPORT_2G4:
+        return zmk_2g4_is_ready();
+#endif
+    default:
+        return false;
+    }
 }
 
 static void update_current_endpoint(void) {
     struct zmk_endpoint_instance new_instance = get_selected_instance();
 
     if (!zmk_endpoint_instance_eq(new_instance, current_instance)) {
-
+        if (current_endpoint_is_ready()) {
+            zmk_endpoints_clear_current();
+        } else {
+            clear_hid_reports();
+        }
         current_instance = new_instance;
-        zmk_endpoints_clear_current();
 
         char endpoint_str[ZMK_ENDPOINT_STR_LEN];
         zmk_endpoint_instance_to_str(current_instance, endpoint_str, sizeof(endpoint_str));

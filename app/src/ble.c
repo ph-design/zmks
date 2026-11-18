@@ -345,19 +345,16 @@ int zmk_ble_prof_disconnect(uint8_t index) {
 
 bt_addr_le_t *zmk_ble_active_profile_addr(void) { return &profiles[active_profile].peer; }
 
-struct bt_conn *zmk_ble_active_profile_conn(void) {
-    struct bt_conn *conn;
-    bt_addr_le_t *addr = zmk_ble_active_profile_addr();
-
-    if (!bt_addr_le_cmp(addr, BT_ADDR_LE_ANY)) {
-        LOG_WRN("Not sending, no active address for current profile");
-        return NULL;
-    } else if ((conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, addr)) == NULL) {
-        LOG_WRN("Not sending, not connected to active profile");
+struct bt_conn *zmk_ble_profile_conn(uint8_t index) {
+    if (index >= ZMK_BLE_PROFILE_COUNT || zmk_ble_profile_is_open(index)) {
         return NULL;
     }
 
-    return conn;
+    return bt_conn_lookup_addr_le(BT_ID_DEFAULT, &profiles[index].peer);
+}
+
+struct bt_conn *zmk_ble_active_profile_conn(void) {
+    return zmk_ble_profile_conn(active_profile);
 }
 
 char *zmk_ble_active_profile_name(void) { return profiles[active_profile].name; }

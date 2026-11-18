@@ -199,6 +199,17 @@ static int send_boot_announcement(void) {
 
 bool zmk_2g4_is_ready(void) { return ready; }
 
+int zmk_2g4_wait_for_tx(void) {
+    int64_t deadline = k_uptime_get() + 100;
+    while (ready && !zmk_esb_is_idle()) {
+        if (k_uptime_get() >= deadline) {
+            return -ETIMEDOUT;
+        }
+        k_msleep(1);
+    }
+    return 0;
+}
+
 int zmk_2g4_start(void) {
     if (ready) {
         return 0;
