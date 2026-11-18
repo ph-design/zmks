@@ -16,29 +16,27 @@
 LOG_MODULE_REGISTER(lis2dh, CONFIG_SENSOR_LOG_LEVEL);
 #include "lis2dh.h"
 
-#define ACCEL_SCALE(sensitivity) ((SENSOR_G * (sensitivity) >> 14) / 100)
+#define LIS2DH_NUM_RANGES 4
 
-/*
- * Use values for low-power mode in DS "Mechanical (Sensor) characteristics",
- * multiplied by 100.
- */
-static uint32_t lis2dh_reg_val_to_scale[] = {
-    ACCEL_SCALE(1600),
-    ACCEL_SCALE(3200),
-    ACCEL_SCALE(6400),
-    ACCEL_SCALE(19200),
+// Low-power sensitivity in 0.01 mg/LSB.
+static const uint32_t lis2dh_reg_val_to_scale[][LIS2DH_NUM_RANGES] = {
+    {1600, 3200, 6400, 19200}, // LIS2DH
+    {1563, 3126, 6252, 18758}, // LSM303AGR
 };
 
 static void lis2dh_convert(int16_t raw_val, uint32_t scale, struct sensor_value *val) {
-    int32_t converted_val;
+#if defined(CONFIG_ZMK_LIS2DH_OPER_MODE_HIGH_RES)
+    const unsigned int shift = 4;
+#elif defined(CONFIG_ZMK_LIS2DH_OPER_MODE_LOW_POWER)
+    const unsigned int shift = 8;
+#else
+    const unsigned int shift = 6;
+#endif
+    // Adjust the left-aligned sample and sensitivity for the selected resolution
+    int32_t sample = raw_val >> shift;
+    int64_t converted_val =
+        (int64_t)sample * SENSOR_G * scale / (100000U * (1U << (8 - shift)));
 
-    /*
-     * maximum converted value we can get is: max(raw_val) * max(scale)
-     *	max(raw_val >> 4) = +/- 2^11
-     *	max(scale) = 114921
-     *	max(converted_val) = 235358208 which is less than 2^31
-     */
-    converted_val = (raw_val >> 4) * scale;
     val->val1 = converted_val / 1000000;
     val->val2 = converted_val % 1000000;
 }
@@ -152,21 +150,20 @@ static int lis2dh_fetch_xyz(const struct device *dev, enum sensor_channel chan) 
     struct lis2dh_data *lis2dh = dev->data;
     int status = -ENODATA;
     size_t i;
+    uint8_t raw[LIS2DH_BUF_SZ];
     /*
      * since status and all accel data register addresses are consecutive,
      * a burst read can be used to read all the samples
      */
-    status = lis2dh->hw_tf->read_data(dev, LIS2DH_REG_STATUS, lis2dh->sample.raw,
-                                      sizeof(lis2dh->sample.raw));
+    status = lis2dh->hw_tf->read_data(dev, LIS2DH_REG_STATUS, raw, sizeof(raw));
     if (status < 0) {
         LOG_WRN("Could not read accel axis data");
         return status;
     }
 
-    for (i = 0; i < (3 * sizeof(int16_t)); i += sizeof(int16_t)) {
-        int16_t *sample = (int16_t *)&lis2dh->sample.raw[1 + i];
-
-        *sample = sys_le16_to_cpu(*sample);
+    lis2dh->sample.status = raw[0];
+    for (i = 0; i < ARRAY_SIZE(lis2dh->sample.xyz); i++) {
+        lis2dh->sample.xyz[i] = (int16_t)sys_get_le16(raw + 1 + i * sizeof(int16_t));
     }
 
     if (lis2dh->sample.status & LIS2DH_STATUS_DRDY_MASK) {
@@ -259,7 +256,6 @@ static int lis2dh_acc_odr_set(const struct device *dev, uint16_t freq) {
 #ifdef CONFIG_ZMK_LIS2DH_ACCEL_RANGE_RUNTIME
 
 #define LIS2DH_RANGE_IDX_TO_VALUE(idx) (1 << ((idx) + 1))
-#define LIS2DH_NUM_RANGES 4
 
 static int lis2dh_range_to_reg_val(uint16_t range) {
     int i;
@@ -275,6 +271,7 @@ static int lis2dh_range_to_reg_val(uint16_t range) {
 
 static int lis2dh_acc_range_set(const struct device *dev, int32_t range) {
     struct lis2dh_data *lis2dh = dev->data;
+    const struct lis2dh_config *cfg = dev->config;
     int fs;
 
     fs = lis2dh_range_to_reg_val(range);
@@ -282,7 +279,7 @@ static int lis2dh_acc_range_set(const struct device *dev, int32_t range) {
         return fs;
     }
 
-    lis2dh->scale = lis2dh_reg_val_to_scale[fs];
+    lis2dh->scale = lis2dh_reg_val_to_scale[cfg->hw.is_lsm303agr_dev][fs];
 
     return lis2dh->hw_tf->update_reg(dev, LIS2DH_REG_CTRL4, LIS2DH_FS_MASK,
                                      (fs << LIS2DH_FS_SHIFT));
@@ -396,14 +393,6 @@ int lis2dh_init_chip(const struct device *dev) {
         return -EINVAL;
     }
 
-    /* Fix LSM303AGR_ACCEL device scale values */
-    if (cfg->hw.is_lsm303agr_dev) {
-        lis2dh_reg_val_to_scale[0] = ACCEL_SCALE(1563);
-        lis2dh_reg_val_to_scale[1] = ACCEL_SCALE(3126);
-        lis2dh_reg_val_to_scale[2] = ACCEL_SCALE(6252);
-        lis2dh_reg_val_to_scale[3] = ACCEL_SCALE(18758);
-    }
-
     if (cfg->hw.disc_pull_up) {
         status = lis2dh->hw_tf->update_reg(dev, LIS2DH_REG_CTRL0, LIS2DH_SDO_PU_DISC_MASK,
                                            LIS2DH_SDO_PU_DISC_MASK);
@@ -429,7 +418,7 @@ int lis2dh_init_chip(const struct device *dev) {
     }
 
     /* set full scale range and store it for later conversion */
-    lis2dh->scale = lis2dh_reg_val_to_scale[LIS2DH_FS_IDX];
+    lis2dh->scale = lis2dh_reg_val_to_scale[cfg->hw.is_lsm303agr_dev][LIS2DH_FS_IDX];
 #ifdef CONFIG_ZMK_LIS2DH_BLOCK_DATA_UPDATE
     status = lis2dh->hw_tf->write_reg(dev, LIS2DH_REG_CTRL4,
                                       LIS2DH_FS_BITS | LIS2DH_HR_BIT | LIS2DH_CTRL4_BDU_BIT);

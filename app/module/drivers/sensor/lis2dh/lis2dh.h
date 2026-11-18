@@ -263,7 +263,7 @@ struct lis2dh_data {
 	const struct lis2dh_transfer_function *hw_tf;
 
 	union lis2dh_sample sample;
-	/* current scaling factor, in micro m/s^2 / lsb */
+	/* Low-power sensitivity in 0.01 mg/LSB. */
 	uint32_t scale;
 
 #ifdef CONFIG_ZMK_LIS2DH_MEASURE_TEMPERATURE
