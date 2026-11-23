@@ -17,11 +17,14 @@
 #include <zmk/events/usb_conn_state_changed.h>
 
 #include <zmk/usb_hid.h>
+#if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS) && IS_ENABLED(CONFIG_ZMK_USB)
+#include <zmk/hid_indicators.h>
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static enum usb_dc_status_code usb_status = USB_DC_UNKNOWN;
-static bool is_configured;
+static atomic_t is_configured;
 static atomic_t usb_connection_id;
 
 uint32_t zmk_usb_get_connection_id(void) { return (uint32_t)atomic_get(&usb_connection_id); }
@@ -55,7 +58,7 @@ enum zmk_usb_conn_state zmk_usb_get_conn_state(void) {
 }
 
 bool zmk_usb_is_hid_ready(void) {
-    return zmk_usb_get_conn_state() == ZMK_USB_CONN_HID && is_configured;
+    return zmk_usb_get_conn_state() == ZMK_USB_CONN_HID && atomic_get(&is_configured);
 }
 
 void usb_status_cb(enum usb_dc_status_code status, const uint8_t *params) {
@@ -70,14 +73,22 @@ void usb_status_cb(enum usb_dc_status_code status, const uint8_t *params) {
         zmk_usb_hid_set_protocol(HID_PROTOCOL_REPORT);
     }
 #endif
-    if (status == USB_DC_RESET || status == USB_DC_DISCONNECTED) {
-        atomic_inc(&usb_connection_id);
-    }
+    bool reset = status == USB_DC_RESET || status == USB_DC_DISCONNECTED;
     usb_status = status;
-    if (zmk_usb_get_conn_state() == ZMK_USB_CONN_HID) {
-        is_configured |= usb_status == USB_DC_CONFIGURED;
-    } else {
-        is_configured = false;
+    if (status == USB_DC_CONFIGURED) {
+        bool configured = params && *params;
+        reset = atomic_set(&is_configured, configured) && !configured;
+    } else if (zmk_usb_get_conn_state() != ZMK_USB_CONN_HID) {
+        atomic_clear(&is_configured);
+    }
+    if (reset) {
+        atomic_inc(&usb_connection_id);
+#if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS) && IS_ENABLED(CONFIG_ZMK_USB)
+        const struct zmk_endpoint_instance endpoint = {.transport = ZMK_TRANSPORT_USB};
+        if (zmk_hid_indicators_get_profile(endpoint)) {
+            zmk_hid_indicators_set_profile(0, endpoint);
+        }
+#endif
     }
     k_work_submit(&usb_status_notifier_work);
 };

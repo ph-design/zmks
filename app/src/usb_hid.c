@@ -100,6 +100,14 @@ static int get_report_cb(const struct device *dev, struct usb_setup_packet *setu
             *len = sizeof(*report);
             break;
         }
+#if IS_ENABLED(CONFIG_ZMK_POINTING)
+        case ZMK_HID_REPORT_ID_MOUSE: {
+            struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
+            *data = (uint8_t *)report;
+            *len = sizeof(*report);
+            break;
+        }
+#endif
         default:
             LOG_ERR("Invalid report ID %d requested", setup->wValue & HID_GET_REPORT_ID_MASK);
             return -EINVAL;
@@ -149,7 +157,8 @@ static int set_report_cb(const struct device *dev, struct usb_setup_packet *setu
         switch (setup->wValue & HID_GET_REPORT_ID_MASK) {
 #if IS_ENABLED(CONFIG_ZMK_HID_INDICATORS)
         case ZMK_HID_REPORT_ID_LEDS:
-            if (*len != sizeof(struct zmk_hid_led_report)) {
+            if (*len != sizeof(struct zmk_hid_led_report) ||
+                (*data)[0] != ZMK_HID_REPORT_ID_LEDS) {
                 LOG_ERR("LED set report is malformed: length=%d", *len);
                 return -EINVAL;
             } else {
@@ -184,31 +193,40 @@ static const struct hid_ops ops = {
     .set_report = set_report_cb,
 };
 
-static int zmk_usb_hid_send_report(const uint8_t *report, size_t len) {
-    switch (zmk_usb_get_status()) {
-    case USB_DC_SUSPEND:
-        return usb_wakeup_request();
-    case USB_DC_ERROR:
-    case USB_DC_RESET:
-    case USB_DC_DISCONNECTED:
-    case USB_DC_UNKNOWN:
-        return -ENODEV;
-    default:
-        k_sem_take(&hid_sem, K_MSEC(30));
-        int err = hid_int_ep_write(hid_dev, report, len, NULL);
+static bool can_send_report(uint32_t connection_id) {
+    return zmk_usb_is_hid_ready() && zmk_usb_get_status() != USB_DC_SUSPEND &&
+           connection_id == zmk_usb_get_connection_id();
+}
 
-        if (err) {
+int zmk_usb_hid_send_report(const uint8_t *report, size_t len, uint32_t connection_id) {
+    if (!can_send_report(connection_id)) {
+        return -ENODEV;
+    }
+    int slot = k_sem_take(&hid_sem, K_MSEC(30));
+    if (!can_send_report(connection_id)) {
+        if (!slot) {
             k_sem_give(&hid_sem);
         }
-
-        return err;
+        return -ENODEV;
     }
+    int err = hid_int_ep_write(hid_dev, report, len, NULL);
+    if (err) {
+        k_sem_give(&hid_sem);
+    }
+    return err;
+}
+
+static int send_report(const uint8_t *report, size_t len) {
+    if (zmk_usb_get_status() == USB_DC_SUSPEND) {
+        return usb_wakeup_request();
+    }
+    return zmk_usb_hid_send_report(report, len, zmk_usb_get_connection_id());
 }
 
 int zmk_usb_hid_send_keyboard_report(void) {
     size_t len;
     uint8_t *report = get_keyboard_report(&len);
-    return zmk_usb_hid_send_report(report, len);
+    return send_report(report, len);
 }
 
 int zmk_usb_hid_send_consumer_report(void) {
@@ -219,7 +237,7 @@ int zmk_usb_hid_send_consumer_report(void) {
 #endif /* IS_ENABLED(CONFIG_ZMK_USB_BOOT) */
 
     struct zmk_hid_consumer_report *report = zmk_hid_get_consumer_report();
-    return zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report));
+    return send_report((uint8_t *)report, sizeof(*report));
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
@@ -231,7 +249,7 @@ int zmk_usb_hid_send_mouse_report() {
 #endif /* IS_ENABLED(CONFIG_ZMK_USB_BOOT) */
 
     struct zmk_hid_mouse_report *report = zmk_hid_get_mouse_report();
-    return zmk_usb_hid_send_report((uint8_t *)report, sizeof(*report));
+    return send_report((uint8_t *)report, sizeof(*report));
 }
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)
 

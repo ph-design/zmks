@@ -6,8 +6,10 @@
 
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
+int zmk_usb_hid_send_report(const uint8_t *report, size_t len, uint32_t connection_id);
 int zmk_usb_hid_send_keyboard_report(void);
 int zmk_usb_hid_send_consumer_report(void);
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
