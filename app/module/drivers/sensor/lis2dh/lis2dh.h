@@ -289,6 +289,9 @@ struct lis2dh_data {
 	sensor_trigger_handler_t handler_dtap;
 	const struct sensor_trigger *trig_dtap;
 	atomic_t trig_flags;
+#ifdef CONFIG_ZMK_MOTION_HARDWARE_TAP
+	atomic_t double_click_mask;
+#endif
 	enum sensor_channel chan_drdy;
 
 	/* CLICK_SRC latched at interrupt time; the register self-clears on read */

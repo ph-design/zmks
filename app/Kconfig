@@ -601,6 +601,17 @@ menuconfig ZMK_MOTION
 
 if ZMK_MOTION
 
+DT_CHOSEN_ZMK_IMU := zmk,imu
+
+config ZMK_MOTION_SAMPLER
+    bool
+
+config ZMK_MOTION_HARDWARE_TAP
+    def_bool y
+    depends on ZMK_LIS2DH_ODR_RUNTIME && !ZMK_LIS2DH_OPER_MODE_LOW_POWER
+    depends on $(dt_chosen_enabled,$(DT_CHOSEN_ZMK_IMU))
+    select ZMK_MOTION_SAMPLER
+
 config ZMK_MOTION_TAP_SIDE_INVERT
     bool "Invert case tap left/right side detection"
 

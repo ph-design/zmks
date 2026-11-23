@@ -145,11 +145,10 @@ config ZMK_LIS2DH_ACCEL_HP_FILTERS
 	bool "Set High Pass filters for AOI functions on interrupt lines"
 
 config ZMK_LIS2DH_BLOCK_DATA_UPDATE
-	bool "Output registers not updated until MSB and LSB read"
+	def_bool y
 
 config ZMK_LIS2DH_MEASURE_TEMPERATURE
 	bool "Temperature measurements"
-	select ZMK_LIS2DH_BLOCK_DATA_UPDATE
 	help
 	  The temperature sensor is most suitable for measuring
 	  relative temperature. For example, it is X degrees C

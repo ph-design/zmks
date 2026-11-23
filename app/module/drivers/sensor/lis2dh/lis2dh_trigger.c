@@ -18,6 +18,9 @@
 
 LOG_MODULE_DECLARE(lis2dh, CONFIG_SENSOR_LOG_LEVEL);
 #include "lis2dh.h"
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#include <zmk/motion_tap.h>
+#endif
 
 static const gpio_flags_t gpio_int_cfg[5] = {
     GPIO_INT_EDGE_BOTH,  GPIO_INT_EDGE_RISING, GPIO_INT_EDGE_FALLING,
@@ -182,7 +185,9 @@ static int lis2dh_trigger_anym_tap_set(const struct device *dev, sensor_trigger_
         return status;
     }
 
-    if ((handler == NULL) || (status < 0)) {
+    bool keep_int2 = IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP) &&
+                     (lis2dh->handler_anymotion || lis2dh->handler_dtap);
+    if (!handler && !keep_int2) {
         return status;
     }
 
@@ -287,6 +292,11 @@ static int lis2dh_start_trigger_int2(const struct device *dev) {
     mask = LIS2DH_EN_CLICK_XS | LIS2DH_EN_CLICK_YS | LIS2DH_EN_CLICK_ZS | LIS2DH_EN_CLICK_XD |
            LIS2DH_EN_CLICK_YD | LIS2DH_EN_CLICK_ZD;
     val = (has_anyt ? LIS2DH_EN_CLICK_YS : 0) | (has_dtap ? LIS2DH_EN_CLICK_YD : 0);
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    if (dev == DEVICE_DT_GET(DT_CHOSEN(zmk_imu))) {
+        val = has_dtap ? atomic_get(&lis2dh->double_click_mask) : 0;
+    }
+#endif
     status = lis2dh->hw_tf->update_reg(dev, reg, mask, val);
     if (status < 0) {
         LOG_ERR("Failed to configure tap interrupt");
@@ -494,6 +504,11 @@ static void lis2dh_gpio_int2_callback(const struct device *dev, struct gpio_call
 
     ARG_UNUSED(pins);
 
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    if (lis2dh->dev == DEVICE_DT_GET(DT_CHOSEN(zmk_imu))) {
+        zmk_tap_gpio();
+    }
+#endif
     atomic_set_bit(&lis2dh->trig_flags, TRIGGED_INT2);
 
     // level triggered: disable until processed
@@ -572,6 +587,11 @@ static void lis2dh_thread_cb(const struct device *dev) {
             return;
         }
 
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+        if (dev == DEVICE_DT_GET(DT_CHOSEN(zmk_imu))) {
+            zmk_tap_click(reg_val);
+        }
+#endif
         if ((reg_val & (LIS2DH_CLICK_SRC_SCLICK | LIS2DH_CLICK_SRC_DCLICK)) != 0) {
             lis2dh->click_src = reg_val;
         }
@@ -708,3 +728,35 @@ check_gpio_int:
 end:
     return status;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+void zmk_lis2dh_set_double_click_axes(const struct device *dev, uint8_t axes) {
+    struct lis2dh_data *data = dev->data;
+    uint8_t value = 0;
+    for (unsigned int axis = 0; axis < 3; axis++) {
+        if (axes & BIT(axis)) {
+            value |= BIT(2 * axis + 1);
+        }
+    }
+    atomic_set(&data->double_click_mask, value);
+}
+
+int zmk_lis2dh_click_snapshot(const struct device *dev, uint8_t regs[ZMK_TAP_REG_COUNT],
+                               uint32_t *full_scale_mg) {
+    static const uint8_t addresses[] = {
+        LIS2DH_REG_CTRL1, LIS2DH_REG_CTRL2, LIS2DH_REG_CTRL3, LIS2DH_REG_CTRL4,
+        LIS2DH_REG_CTRL6, LIS2DH_REG_CFG_CLICK, LIS2DH_REG_CFG_CLICK_THS,
+        LIS2DH_REG_TIME_LIMIT, LIS2DH_REG_TIME_LATENCY, LIS2DH_REG_TIME_WINDOW, LIS2DH_REG_CTRL5,
+    };
+    BUILD_ASSERT(ARRAY_SIZE(addresses) == ZMK_TAP_REG_COUNT);
+    struct lis2dh_data *data = dev->data;
+    for (size_t i = 0; i < ARRAY_SIZE(addresses); i++) {
+        int err = data->hw_tf->read_reg(dev, addresses[i], &regs[i]);
+        if (err) {
+            return err;
+        }
+    }
+    *full_scale_mg = (2U << ((regs[3] & LIS2DH_FS_MASK) >> LIS2DH_FS_SHIFT)) * 1000;
+    return 0;
+}
+#endif

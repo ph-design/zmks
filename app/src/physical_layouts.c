@@ -21,6 +21,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/matrix.h>
 #include <zmk/physical_layouts.h>
 #include <zmk/event_manager.h>
+#include <zmk/activity.h>
 #include <zmk/events/position_state_changed.h>
 
 ZMK_EVENT_IMPL(zmk_physical_layout_selection_changed);
@@ -191,7 +192,9 @@ static void zmk_physical_layout_kscan_callback(const struct device *dev, uint32_
         .column = column,
         .state = (pressed ? ZMK_KSCAN_EVENT_STATE_PRESSED : ZMK_KSCAN_EVENT_STATE_RELEASED)};
 
-    k_msgq_put(&physical_layouts_kscan_msgq, &ev, K_NO_WAIT);
+    if (k_msgq_put(&physical_layouts_kscan_msgq, &ev, K_NO_WAIT)) {
+        LOG_ERR("Kscan event queue full");
+    }
     k_work_submit(&msg_processor.work);
 }
 
@@ -211,6 +214,9 @@ static void zmk_physical_layouts_kscan_process_msgq(struct k_work *item) {
 
         LOG_DBG("Row: %d, col: %d, position: %d, pressed: %s", ev.row, ev.column, position,
                 (pressed ? "true" : "false"));
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+        zmk_activity_note_key(position, pressed);
+#endif
         raise_zmk_position_state_changed(
             (struct zmk_position_state_changed){.source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
                                                 .state = pressed,
