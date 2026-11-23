@@ -302,7 +302,7 @@ BUILD_ASSERT(CONFIG_ZMK_STUDIO_RPC_TX_BUF_SIZE >= 2);
 struct rpc_write_context {
     const struct zmk_rpc_transport *transport;
     uint32_t session;
-    bool notification;
+    uint32_t wait_ms;
     bool started;
     int err;
     size_t len;
@@ -310,7 +310,7 @@ struct rpc_write_context {
 };
 
 static int rpc_tx_flush(struct rpc_write_context *context) {
-    int64_t deadline = k_uptime_get() + 5000;
+    int64_t deadline = k_uptime_get() + context->wait_ms;
     for (;;) {
         k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
         if (context->session != current_session_locked() ||
@@ -329,7 +329,7 @@ static int rpc_tx_flush(struct rpc_write_context *context) {
             return 0;
         }
         k_spin_unlock(&rpc_io_lock, key);
-        if (context->notification) {
+        if (!context->wait_ms) {
             return -EAGAIN;
         }
         int64_t remaining = deadline - k_uptime_get();
@@ -367,13 +367,15 @@ static bool escaped_size(pb_ostream_t *stream, const uint8_t *buf, size_t count)
 
 static int send_response(const zmk_studio_Response *resp, uint32_t session) {
     bool notification = resp->which_type == zmk_studio_Response_notification_tag;
-    if (k_mutex_lock(&rpc_tx_mutex, notification ? K_NO_WAIT : K_MSEC(500))) {
+    bool best_effort = notification &&
+                       resp->type.notification.which_subsystem == zmk_studio_Notification_motion_tag;
+    if (k_mutex_lock(&rpc_tx_mutex, best_effort ? K_NO_WAIT : K_MSEC(500))) {
         return -EAGAIN;
     }
 
     struct rpc_write_context context = {
         .session = session,
-        .notification = notification,
+        .wait_ms = best_effort ? 0 : notification ? 500 : 5000,
         .data = {FRAMING_SOF},
         .len = 1,
     };
@@ -390,7 +392,7 @@ static int send_response(const zmk_studio_Response *resp, uint32_t session) {
         err = -ENOTCONN;
         goto done;
     }
-    if (notification) {
+    if (best_effort) {
         size_t size = 2;
         pb_ostream_t sizing = {escaped_size, &size, SIZE_MAX, 0};
         if (!pb_encode(&sizing, &zmk_studio_Response_msg, resp)) {
@@ -618,6 +620,34 @@ static int zmk_rpc_init(void) {
 
 SYS_INIT(zmk_rpc_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
+struct rpc_notification {
+    uint32_t session;
+    zmk_studio_Notification notification;
+};
+
+K_MSGQ_DEFINE(rpc_notifications, sizeof(struct rpc_notification), 8, 4);
+
+static void send_notification(const zmk_studio_Notification *notification, uint32_t session) {
+    zmk_studio_Response resp = {
+        .which_type = zmk_studio_Response_notification_tag,
+        .type.notification = *notification,
+    };
+    send_response(&resp, session);
+}
+
+static void rpc_notify_main(void *a, void *b, void *c) {
+    ARG_UNUSED(a);
+    ARG_UNUSED(b);
+    ARG_UNUSED(c);
+    struct rpc_notification pending;
+    for (;;) {
+        k_msgq_get(&rpc_notifications, &pending, K_FOREVER);
+        send_notification(&pending.notification, pending.session);
+    }
+}
+
+static K_THREAD_DEFINE(rpc_notify_thread, 2048, rpc_notify_main, NULL, NULL, NULL, 8, 0, 0);
+
 static int studio_rpc_listener_cb(const zmk_event_t *eh) {
     bool transport_changed = as_zmk_endpoint_changed(eh) != NULL;
 #if IS_ENABLED(CONFIG_ZMK_USB) && IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART)
@@ -630,10 +660,22 @@ static int studio_rpc_listener_cb(const zmk_event_t *eh) {
 
     struct zmk_studio_rpc_notification *rpc_notify = as_zmk_studio_rpc_notification(eh);
     if (rpc_notify) {
-        zmk_studio_Response resp = zmk_studio_Response_init_zero;
-        resp.which_type = zmk_studio_Response_notification_tag;
-        resp.type.notification = rpc_notify->notification;
-        send_response(&resp, current_session());
+        uint32_t session = current_session();
+        if (!session) {
+            return ZMK_EV_EVENT_BUBBLE;
+        }
+        if (rpc_notify->notification.which_subsystem != zmk_studio_Notification_motion_tag) {
+            struct rpc_notification pending = {
+                .session = session,
+                .notification = rpc_notify->notification,
+            };
+            if (k_msgq_put(&rpc_notifications, &pending, K_NO_WAIT)) {
+                LOG_DBG("Studio notification queue full");
+            }
+            return ZMK_EV_EVENT_BUBBLE;
+        }
+
+        send_notification(&rpc_notify->notification, session);
         return ZMK_EV_EVENT_BUBBLE;
     }
 
