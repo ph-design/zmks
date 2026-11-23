@@ -38,12 +38,18 @@ LOG_MODULE_REGISTER(zmk, CONFIG_ZMK_LOG_LEVEL);
 int main(void) {
     LOG_INF("Welcome to ZMK!\n");
 
+    int settings_status = 0;
 #if IS_ENABLED(CONFIG_SETTINGS)
-    settings_subsys_init();
-    settings_load();
+    settings_status = settings_subsys_init();
+    if (!settings_status) {
+        settings_status = settings_load();
+    }
 #if IS_ENABLED(CONFIG_ZMK_STUDIO)
     zmk_combo_finalize_settings();
 #endif
+    if (settings_status) {
+        LOG_ERR("Failed to load settings: %d", settings_status);
+    }
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
     zmk_rgb_underglow_apply_state();
 #endif
@@ -54,7 +60,7 @@ int main(void) {
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
-    zmk_2g4_dongle_start();
+    zmk_2g4_dongle_start(settings_status);
 #endif
 
 #ifdef CONFIG_ZMK_DISPLAY

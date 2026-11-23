@@ -256,7 +256,10 @@ static int zmk_2g4_dongle_init(void) {
     return 0;
 }
 
-int zmk_2g4_dongle_start(void) {
+int zmk_2g4_dongle_start(int settings_status) {
+    if (settings_status) {
+        return settings_status;
+    }
     atomic_set(&battery_percent, -1);
     struct zmk_2g4_addr addr;
 

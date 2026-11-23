@@ -23,4 +23,4 @@ int zmk_2g4_stop(void);
 bool zmk_2g4_dongle_kb_connected(void);
 void zmk_2g4_dongle_rx_stats(uint32_t *rx_total, uint32_t *decrypt_fail);
 int zmk_2g4_dongle_battery_percent(void);
-int zmk_2g4_dongle_start(void);
+int zmk_2g4_dongle_start(int settings_status);

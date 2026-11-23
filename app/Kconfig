@@ -310,6 +310,11 @@ endif # ZMK_2G4
 
 if ZMK_2G4_DONGLE
 
+config ZMK_2G4_DONGLE_EXTERNAL
+    bool
+    help
+      Build the dongle implementation supplied by a module.
+
 config ZMK_2G4_DONGLE_INIT_PRIORITY
     int "Dongle init priority"
     default 51
@@ -354,7 +359,7 @@ config ZMK_2G4_AES_KEY
     help
       16-byte AES-128 key as 32 hex characters, used as the factory key until
       per-device pairing replaces it. Both keyboard and dongle must use the
-      same key. Required when 2.4G is enabled: leaving it empty is a build error.
+      same key. A dongle can omit the factory key and require pairing.
       Example: "0123456789abcdef0123456789abcdef"
 
 endif # ZMK_2G4 || ZMK_2G4_DONGLE

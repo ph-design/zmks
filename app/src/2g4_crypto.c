@@ -40,8 +40,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CCM_SCRATCH_SIZE 43
 #define REPLAY_WINDOW 64
 
-BUILD_ASSERT(sizeof(CONFIG_ZMK_2G4_AES_KEY) == 2 * AES_KEY_SIZE + 1,
-             "Set CONFIG_ZMK_2G4_AES_KEY to a 32-hex key; empty would send plaintext");
+BUILD_ASSERT(sizeof(CONFIG_ZMK_2G4_AES_KEY) == 2 * AES_KEY_SIZE + 1 ||
+                 (IS_ENABLED(CONFIG_ZMK_2G4_DONGLE) && sizeof(CONFIG_ZMK_2G4_AES_KEY) == 1),
+             "Set CONFIG_ZMK_2G4_AES_KEY to 32 hex characters, or leave it empty for a receiver");
 
 static const char *key_hex = CONFIG_ZMK_2G4_AES_KEY;
 static uint8_t factory_key[AES_KEY_SIZE];
@@ -235,7 +236,9 @@ static int zmk_2g4_crypto_init(void) {
         return 0;
     }
 
-    if (parse_hex_key()) {
+    if (!key_hex[0]) {
+        LOG_DBG("2.4G receiver waiting for pairing");
+    } else if (parse_hex_key()) {
         LOG_ERR("Invalid 2.4G AES key (need 32 hex chars)");
     } else {
         factory_valid = true;
