@@ -68,6 +68,7 @@ void zmk_esb_disable(void);
 bool zmk_esb_is_idle(void);
 
 int zmk_esb_write_payload(const struct zmk_esb_payload *payload);
+int zmk_esb_write_payload_if_idle(const struct zmk_esb_payload *payload);
 int zmk_esb_read_rx_payload(struct zmk_esb_payload *payload);
 
 int zmk_esb_start_tx(void);

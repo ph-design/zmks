@@ -42,6 +42,7 @@ static const int8_t valid_tx_powers[] = {8, 4, 3, 0, -4, -8, -12, -16, -20, -40}
 static NRF_TIMER_Type *esb_timer_inst;
 static IRQn_Type esb_timer_irqn;
 static nrf_ppi_channel_t ppi_ch_timer_disable;
+static nrf_ppi_channel_t ppi_ch_address_stop;
 
 struct esb_pdu {
     uint8_t length : 6;
@@ -64,6 +65,7 @@ enum esb_state {
 struct pipe_info {
     uint16_t crc;
     uint8_t pid;
+    bool seen;
 };
 
 static volatile enum esb_state esb_state = STATE_UNINIT;
@@ -80,6 +82,7 @@ static uint32_t rx_front, rx_back;
 static atomic_t rx_count;
 
 static struct zmk_esb_payload ack_pl[CONFIG_ZMK_ESB_PIPE_COUNT];
+static struct zmk_esb_payload ack_retry[CONFIG_ZMK_ESB_PIPE_COUNT];
 static bool ack_pl_pending[CONFIG_ZMK_ESB_PIPE_COUNT];
 
 static uint8_t tx_buf[sizeof(struct esb_pdu) + CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH] __aligned(4);
@@ -97,6 +100,41 @@ static uint32_t watchdog_timeout_ms;
 K_MSGQ_DEFINE(evt_msgq, sizeof(struct zmk_esb_event), 4, 4);
 static struct k_work evt_work;
 static struct k_work_delayable watchdog_work;
+
+#if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
+static struct {
+    atomic_t tx_ok;
+    atomic_t tx_failed;
+    atomic_t tx_full;
+    atomic_t rx_queued;
+    atomic_t rx_full;
+    atomic_t event_full;
+    atomic_t watchdog;
+    atomic_t start_timeout;
+} diagnostics;
+
+static void diagnostics_handler(struct k_work *work) {
+    ARG_UNUSED(work);
+    if (esb_state == STATE_UNINIT) {
+        return;
+    }
+    LOG_INF("ESB %s state=%u hw=%u txq=%ld rxq=%ld tx_ok=%ld tx_fail=%ld tx_full=%ld",
+            esb_cfg.mode == ZMK_ESB_MODE_PTX ? "PTX" : "PRX", esb_state, NRF_RADIO->STATE,
+            (long)atomic_get(&tx_count), (long)atomic_get(&rx_count),
+            (long)atomic_get(&diagnostics.tx_ok), (long)atomic_get(&diagnostics.tx_failed),
+            (long)atomic_get(&diagnostics.tx_full));
+    LOG_INF("ESB rx=%ld rx_full=%ld event_full=%ld watchdog=%ld start_timeout=%ld",
+            (long)atomic_get(&diagnostics.rx_queued), (long)atomic_get(&diagnostics.rx_full),
+            (long)atomic_get(&diagnostics.event_full), (long)atomic_get(&diagnostics.watchdog),
+            (long)atomic_get(&diagnostics.start_timeout));
+    k_work_schedule(k_work_delayable_from_work(work), K_SECONDS(1));
+}
+
+static K_WORK_DELAYABLE_DEFINE(diagnostics_work, diagnostics_handler);
+#define DIAG_INC(counter) atomic_inc(&diagnostics.counter)
+#else
+#define DIAG_INC(counter) ((void)0)
+#endif
 
 static void (*on_radio_disabled)(void);
 
@@ -165,6 +203,7 @@ static void tx_fifo_remove_first(void) {
 
 static bool rx_fifo_push(const struct esb_pdu *pdu, uint8_t pipe, int8_t rssi, uint8_t pid) {
     if (atomic_get(&rx_count) >= CONFIG_ZMK_ESB_RX_FIFO_SIZE) {
+        DIAG_INC(rx_full);
         return false;
     }
     struct zmk_esb_payload *p = &rx_fifo_buf[rx_back];
@@ -181,6 +220,7 @@ static bool rx_fifo_push(const struct esb_pdu *pdu, uint8_t pipe, int8_t rssi, u
         rx_back = 0;
     }
     atomic_inc(&rx_count);
+    DIAG_INC(rx_queued);
     return true;
 }
 
@@ -199,7 +239,16 @@ static void signal_event(enum zmk_esb_event_id id) {
         .evt_id = id,
         .tx_attempts = last_tx_attempts,
     };
-    k_msgq_put(&evt_msgq, &evt, K_NO_WAIT);
+#if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
+    if (id == ZMK_ESB_EVENT_TX_SUCCESS) {
+        DIAG_INC(tx_ok);
+    } else if (id == ZMK_ESB_EVENT_TX_FAILED) {
+        DIAG_INC(tx_failed);
+    }
+#endif
+    if (k_msgq_put(&evt_msgq, &evt, K_NO_WAIT)) {
+        DIAG_INC(event_full);
+    }
     k_work_submit(&evt_work);
 }
 
@@ -277,11 +326,18 @@ static void ppi_ack_timeout_enable(void) {
         NRF_PPI, ppi_ch_timer_disable,
         (uint32_t)nrf_timer_event_address_get(esb_timer_inst, NRF_TIMER_EVENT_COMPARE0),
         (uint32_t)nrf_radio_task_address_get(NRF_RADIO, NRF_RADIO_TASK_DISABLE));
-    nrf_ppi_channel_enable(NRF_PPI, ppi_ch_timer_disable);
+    nrf_ppi_channel_endpoint_setup(
+        NRF_PPI, ppi_ch_address_stop,
+        (uint32_t)nrf_radio_event_address_get(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS),
+        (uint32_t)nrf_timer_task_address_get(esb_timer_inst, NRF_TIMER_TASK_STOP));
+    nrf_ppi_channels_enable(NRF_PPI, BIT(ppi_ch_timer_disable) | BIT(ppi_ch_address_stop));
 }
 
 static void ppi_ack_timeout_disable(void) {
     nrf_ppi_channel_disable(NRF_PPI, ppi_ch_timer_disable);
+    if (esb_cfg.mode == ZMK_ESB_MODE_PTX) {
+        nrf_ppi_channel_disable(NRF_PPI, ppi_ch_address_stop);
+    }
 }
 
 static int hfclk_start(void) {
@@ -310,14 +366,15 @@ static void start_tx_transaction(void) {
         nrf_radio_shorts_set(NRF_RADIO, 0);
         nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
         nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-        uint32_t t = 0;
-        while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {
-            if (++t > 10000) {
-                LOG_ERR("RADIO disable timeout, deferring TX");
-                esb_state = STATE_IDLE;
-                return;
+        if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100,
+                      k_busy_wait(1))) {
+            DIAG_INC(start_timeout);
+            LOG_WRN("RADIO disable timed out, retrying TX");
+            esb_state = STATE_IDLE;
+            if (esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO) {
+                k_work_reschedule(&watchdog_work, K_MSEC(1));
             }
-            k_busy_wait(1);
+            return;
         }
         nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     }
@@ -404,6 +461,7 @@ static void on_disabled_ptx_tx(void) {
 
     nrf_timer_task_trigger(esb_timer_inst, NRF_TIMER_TASK_CLEAR);
     nrf_timer_cc_set(esb_timer_inst, NRF_TIMER_CC_CHANNEL0, ack_timeout_us);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS);
     nrf_timer_event_clear(esb_timer_inst, NRF_TIMER_EVENT_COMPARE0);
     ppi_ack_timeout_enable();
     nrf_timer_task_trigger(esb_timer_inst, NRF_TIMER_TASK_START);
@@ -494,50 +552,51 @@ static void start_rx_listening(void) {
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RXEN);
 }
 
+static void restart_rx(void) {
+    nrf_radio_packetptr_set(NRF_RADIO, rx_buf);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
+    nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RXEN);
+}
+
 static void on_disabled_prx(void) {
     struct esb_pdu *rx_pdu = (struct esb_pdu *)rx_buf;
     struct esb_pdu *tx_pdu = (struct esb_pdu *)tx_buf;
 
-    if (!nrf_radio_crc_status_check(NRF_RADIO)) {
-        nrf_radio_packetptr_set(NRF_RADIO, rx_buf);
-        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
-        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RXEN);
+    uint8_t pipe = nrf_radio_rxmatch_get(NRF_RADIO);
+    if (!nrf_radio_crc_status_check(NRF_RADIO) || pipe >= CONFIG_ZMK_ESB_PIPE_COUNT ||
+        rx_pdu->length > CONFIG_ZMK_ESB_MAX_PAYLOAD_LENGTH) {
+        restart_rx();
         return;
     }
 
-    uint8_t pipe = nrf_radio_rxmatch_get(NRF_RADIO);
+    struct pipe_info *info = &rx_pipe_info[pipe];
     uint16_t crc = nrf_radio_rxcrc_get(NRF_RADIO);
     uint8_t pid_rx = rx_pdu->pid;
-    bool is_duplicate = (crc == rx_pipe_info[pipe].crc && pid_rx == rx_pipe_info[pipe].pid);
+    bool duplicate = info->seen && crc == info->crc && pid_rx == info->pid;
+    bool wants_ack = !esb_cfg.selective_auto_ack || rx_pdu->ack;
 
-    rx_pipe_info[pipe].crc = crc;
-    rx_pipe_info[pipe].pid = pid_rx;
-
-    bool send_rx_event = false;
-
-    if (!is_duplicate) {
+    if (!duplicate) {
         int8_t rssi = (int8_t)nrf_radio_rssi_sample_get(NRF_RADIO);
-
-        if (rx_fifo_push(rx_pdu, pipe, rssi, pid_rx)) {
-            send_rx_event = true;
+        if (!rx_fifo_push(rx_pdu, pipe, rssi, pid_rx)) {
+            restart_rx();
+            return;
+        }
+        *info = (struct pipe_info){.crc = crc, .pid = pid_rx, .seen = true};
+        ack_retry[pipe].length = 0;
+        if (wants_ack && ack_pl_pending[pipe]) {
+            ack_retry[pipe] = ack_pl[pipe];
+            ack_pl_pending[pipe] = false;
         }
     }
-
-    bool wants_ack = (esb_cfg.selective_auto_ack == false) || (rx_pdu->ack != 0);
 
     if (wants_ack) {
         memset(tx_pdu, 0, sizeof(struct esb_pdu));
         tx_pdu->pid = pid_rx;
         tx_pdu->ack = rx_pdu->ack;
 
-        if (pipe < CONFIG_ZMK_ESB_PIPE_COUNT && ack_pl_pending[pipe]) {
-            tx_pdu->length = ack_pl[pipe].length;
-            memcpy(tx_pdu->data, ack_pl[pipe].data, ack_pl[pipe].length);
-            ack_pl_pending[pipe] = false;
-        } else {
-            tx_pdu->length = 0;
-        }
+        tx_pdu->length = ack_retry[pipe].length;
+        memcpy(tx_pdu->data, ack_retry[pipe].data, tx_pdu->length);
 
         nrf_radio_shorts_set(NRF_RADIO,
                              NRF_RADIO_SHORT_READY_START_MASK | NRF_RADIO_SHORT_END_DISABLE_MASK);
@@ -551,13 +610,10 @@ static void on_disabled_prx(void) {
 
         nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_TXEN);
     } else {
-        nrf_radio_packetptr_set(NRF_RADIO, rx_buf);
-        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_END);
-        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RXEN);
+        restart_rx();
     }
 
-    if (send_rx_event) {
+    if (!duplicate) {
         signal_event(ZMK_ESB_EVENT_RX_RECEIVED);
     }
 }
@@ -600,9 +656,23 @@ static void timer_isr(const void *arg) {
 }
 
 static void watchdog_handler(struct k_work *work) {
-    if (esb_state == STATE_IDLE || esb_state == STATE_UNINIT) {
+    ARG_UNUSED(work);
+
+    unsigned int key = irq_lock();
+    if (esb_state == STATE_IDLE) {
+        if (esb_cfg.mode == ZMK_ESB_MODE_PTX && esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO &&
+            atomic_get(&tx_count)) {
+            start_tx_transaction();
+        }
+        irq_unlock(key);
         return;
     }
+    if (esb_state == STATE_UNINIT) {
+        irq_unlock(key);
+        return;
+    }
+    irq_unlock(key);
+    DIAG_INC(watchdog);
     LOG_WRN("ESB watchdog: state %d stuck, RADIO=%u, resetting", esb_state, NRF_RADIO->STATE);
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
@@ -671,12 +741,24 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
         return -ENOMEM;
     }
 
+    if (esb_cfg.mode == ZMK_ESB_MODE_PTX) {
+        err = nrfx_ppi_channel_alloc(&ppi_ch_address_stop);
+        if (err != NRFX_SUCCESS) {
+            nrfx_ppi_channel_free(ppi_ch_timer_disable);
+            LOG_ERR("PPI alloc failed: %d", err);
+            return -ENOMEM;
+        }
+    }
+
     esb_timer_inst = NRF_TIMER2;
     esb_timer_irqn = TIMER2_IRQn;
 
     int ret = hfclk_start();
     if (ret) {
         nrfx_ppi_channel_free(ppi_ch_timer_disable);
+        if (esb_cfg.mode == ZMK_ESB_MODE_PTX) {
+            nrfx_ppi_channel_free(ppi_ch_address_stop);
+        }
         return ret;
     }
 
@@ -688,6 +770,7 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     memset(rx_pipe_info, 0, sizeof(rx_pipe_info));
     memset(pids, 0, sizeof(pids));
     memset(ack_pl_pending, 0, sizeof(ack_pl_pending));
+    memset(ack_retry, 0, sizeof(ack_retry));
 
     timer_init();
 
@@ -730,6 +813,9 @@ int zmk_esb_init(const struct zmk_esb_config *config) {
     LOG_INF("ESB initialized (mode=%s, bitrate=%s, ch=%u)",
             config->mode == ZMK_ESB_MODE_PTX ? "PTX" : "PRX",
             config->bitrate == ZMK_ESB_BITRATE_2MBPS ? "2M" : "1M", esb_addr.rf_channel);
+#if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
+    k_work_reschedule(&diagnostics_work, K_SECONDS(1));
+#endif
 
     return 0;
 }
@@ -742,6 +828,9 @@ void zmk_esb_disable(void) {
     irq_disable(RADIO_IRQn);
     irq_disable(esb_timer_irqn);
 
+#if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
+    k_work_cancel_delayable(&diagnostics_work);
+#endif
     watchdog_cancel();
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
@@ -749,6 +838,9 @@ void zmk_esb_disable(void) {
     radio_clear();
 
     nrfx_ppi_channel_free(ppi_ch_timer_disable);
+    if (esb_cfg.mode == ZMK_ESB_MODE_PTX) {
+        nrfx_ppi_channel_free(ppi_ch_address_stop);
+    }
     SCB->VTOR = original_vtor;
     __DSB();
     __ISB();
@@ -757,9 +849,11 @@ void zmk_esb_disable(void) {
     LOG_INF("ESB disabled");
 }
 
-bool zmk_esb_is_idle(void) { return esb_state == STATE_IDLE; }
+bool zmk_esb_is_idle(void) {
+    return esb_state == STATE_IDLE && atomic_get(&tx_count) == 0;
+}
 
-int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
+static int write_payload(const struct zmk_esb_payload *payload, bool if_idle) {
     if (esb_state == STATE_UNINIT) {
         return -EACCES;
     }
@@ -780,7 +874,16 @@ int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
     if (esb_cfg.mode == ZMK_ESB_MODE_PTX) {
         unsigned int key = irq_lock();
 
+        if (esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO && esb_state == STATE_IDLE &&
+            atomic_get(&tx_count)) {
+            start_tx_transaction();
+        }
+        if (if_idle && (atomic_get(&tx_count) || esb_state != STATE_IDLE)) {
+            irq_unlock(key);
+            return -EBUSY;
+        }
         if (atomic_get(&tx_count) >= CONFIG_ZMK_ESB_TX_FIFO_SIZE) {
+            DIAG_INC(tx_full);
             irq_unlock(key);
             return -ENOMEM;
         }
@@ -801,12 +904,24 @@ int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
         irq_unlock(key);
     } else {
         unsigned int key = irq_lock();
+        if (if_idle && ack_pl_pending[payload->pipe]) {
+            irq_unlock(key);
+            return -EBUSY;
+        }
         memcpy(&ack_pl[payload->pipe], payload, sizeof(struct zmk_esb_payload));
         ack_pl_pending[payload->pipe] = true;
         irq_unlock(key);
     }
 
     return 0;
+}
+
+int zmk_esb_write_payload(const struct zmk_esb_payload *payload) {
+    return write_payload(payload, false);
+}
+
+int zmk_esb_write_payload_if_idle(const struct zmk_esb_payload *payload) {
+    return write_payload(payload, true);
 }
 
 int zmk_esb_read_rx_payload(struct zmk_esb_payload *payload) {
@@ -893,6 +1008,7 @@ int zmk_esb_flush_tx(void) {
         tx_fifo_reset();
     }
     memset(ack_pl_pending, 0, sizeof(ack_pl_pending));
+    memset(ack_retry, 0, sizeof(ack_retry));
     irq_unlock(key);
     return 0;
 }

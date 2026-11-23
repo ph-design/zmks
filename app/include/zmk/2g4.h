@@ -7,6 +7,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 int zmk_2g4_send_keyboard_report(void);
@@ -16,6 +17,7 @@ int zmk_2g4_send_mouse_report(void);
 #endif
 bool zmk_2g4_is_ready(void);
 int zmk_2g4_wait_for_tx(void);
+int zmk_2g4_send_background(const uint8_t *data, size_t len);
 int zmk_2g4_start(void);
 int zmk_2g4_stop(void);
 bool zmk_2g4_dongle_kb_connected(void);

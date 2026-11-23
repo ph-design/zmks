@@ -1,9 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include <zephyr/kernel.h>
 #include <zephyr/sys/ring_buffer.h>
-#include <zmk/esb.h>
 #include <zmk/2g4.h>
-#include <zmk/2g4_crypto.h>
 #include <zmk/studio/radio.h>
 #include <zmk/studio/radio_link.h>
 #include <zmk/studio/rpc.h>
@@ -16,6 +14,10 @@ K_MSGQ_DEFINE(studio_packets, sizeof(struct radio_message), 8, 4);
 static struct sr_link link;
 static bool active;
 static int64_t last_rx;
+#define STUDIO_POLL_MS 20
+
+static int64_t next_poll;
+static uint8_t ack_sent;
 static uint32_t transport_session;
 static atomic_t ready;
 void studio_radio_status(char *out, size_t size) {
@@ -57,14 +59,10 @@ static uint32_t read_input(uint8_t *data, uint32_t size) {
     return zmk_rpc_tx_read(ZMK_TRANSPORT_2G4, transport_session, data, size);
 }
 
-static void emit(uint8_t flags) {
-    struct zmk_esb_payload p = {.pipe = 0, .noack = false};
-    size_t n = sr_encode(&link, flags, p.data);
-    int encrypted = zmk_2g4_crypto_encrypt(p.data, n, sizeof(p.data));
-    if (encrypted <= 0)
-        return;
-    p.length = encrypted;
-    zmk_esb_write_payload(&p);
+static int emit(uint8_t flags) {
+    uint8_t data[SR_HEADER + SR_DATA];
+    size_t len = sr_encode(&link, flags, data);
+    return zmk_2g4_send_background(data, len);
 }
 static void process(struct radio_message *m) {
     uint32_t session = sr_session(m->data);
@@ -77,6 +75,8 @@ static void process(struct radio_message *m) {
             return;
         }
         sr_reset(&link, session);
+        ack_sent = link.rx;
+        next_poll = 0;
         active = true;
         k_msgq_purge(&studio_packets);
     }
@@ -142,7 +142,11 @@ static void radio_main(void) {
             if (!link.pending_len) {
                 link.pending_len = read_input(link.pending, SR_DATA);
             }
-            emit(0);
+            int64_t now = k_uptime_get();
+            if ((link.pending_len || link.rx != ack_sent || now >= next_poll) && !emit(0)) {
+                ack_sent = link.rx;
+                next_poll = now + STUDIO_POLL_MS;
+            }
         }
         k_msleep(active ? 5 : 20);
     }
