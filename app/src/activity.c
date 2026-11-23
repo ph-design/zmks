@@ -25,8 +25,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/watchdog.h>
 #include <zmk/motion_guard.h>
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#if defined(CONFIG_ZMK_POWER_POLICY) || defined(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 #include <zmk/matrix.h>
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+#include <zmk/power.h>
+#if IS_ENABLED(CONFIG_ZMK_STUDIO_LOCKING)
+#include <zmk/studio/core.h>
+#endif
 #endif
 
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
@@ -49,7 +55,7 @@ static enum zmk_activity_state activity_state;
 
 static atomic_t activity_last_uptime;
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#if defined(CONFIG_ZMK_POWER_POLICY) || defined(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 static ATOMIC_DEFINE(held_positions, ZMK_KEYMAP_LEN);
 static atomic_t held_count;
 static atomic_t last_key;
@@ -100,13 +106,18 @@ enum zmk_activity_state zmk_activity_get_state(void) { return activity_state; }
 static int note_activity(void) {
     atomic_set(&activity_last_uptime, k_uptime_get_32());
 
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    k_work_submit(&activity_work);
+    return 0;
+#else
     return set_state(ZMK_ACTIVITY_ACTIVE);
+#endif
 }
 
 void zmk_activity_note_activity(void) { note_activity(); }
 
 static int activity_event_listener(const zmk_event_t *eh) {
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#if defined(CONFIG_ZMK_POWER_POLICY) || defined(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     const struct zmk_position_state_changed *event = as_zmk_position_state_changed(eh);
     if (event && event->source != ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL) {
         zmk_activity_note_key(event->position, event->state);
@@ -121,8 +132,24 @@ static void activity_work_handler(struct k_work *work) {
     uint32_t inactive_time = current - (uint32_t)atomic_get(&activity_last_uptime);
     bool usb_powered = is_usb_power_present();
     bool locked = IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked();
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    bool held = atomic_get(&held_count) > 0;
+    bool studio_unlocked = false;
+#if IS_ENABLED(CONFIG_ZMK_STUDIO_LOCKING)
+    studio_unlocked = zmk_studio_core_get_lock_state() == ZMK_STUDIO_CORE_LOCK_STATE_UNLOCKED;
+#endif
+    if (held) {
+        atomic_set(&activity_last_uptime, current);
+    }
+    struct zmk_power_state next =
+        zmk_power_update(inactive_time, held, usb_powered, locked, studio_unlocked);
+#endif
 #if IS_ENABLED(CONFIG_ZMK_SLEEP)
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    if (next.deep_sleep) {
+#else
     if (inactive_time > MAX_SLEEP_MS && !usb_powered && !locked) {
+#endif
         set_state(ZMK_ACTIVITY_SLEEP);
 
         if (zmk_pm_suspend_devices() < 0) {
@@ -138,14 +165,18 @@ static void activity_work_handler(struct k_work *work) {
         sys_poweroff();
     }
 #endif /* IS_ENABLED(CONFIG_ZMK_SLEEP) */
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    set_state(next.idle ? ZMK_ACTIVITY_IDLE : ZMK_ACTIVITY_ACTIVE);
+#else
     if (locked || (inactive_time > MAX_IDLE_MS &&
                    (!IS_ENABLED(CONFIG_ZMK_IDLE_SKIP_ON_USB_POWER) || !usb_powered))) {
         set_state(ZMK_ACTIVITY_IDLE);
     }
+#endif
 }
 
 void zmk_activity_force_sleep(void) {
-#if IS_ENABLED(CONFIG_ZMK_SLEEP)
+#if IS_ENABLED(CONFIG_ZMK_SLEEP) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
     // backdate the idle clock so the work pass takes the normal sleep path
     atomic_set(&activity_last_uptime, k_uptime_get_32() - MAX_SLEEP_MS - MSEC_PER_SEC);
     k_work_submit(&activity_work);

@@ -221,7 +221,7 @@ static void zmk_physical_layouts_kscan_process_msgq(struct k_work *item) {
 
         LOG_DBG("Row: %d, col: %d, position: %d, pressed: %s", ev.row, ev.column, position,
                 (pressed ? "true" : "false"));
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#if defined(CONFIG_ZMK_POWER_POLICY) || defined(CONFIG_ZMK_MOTION_HARDWARE_TAP)
         zmk_activity_note_key(position, pressed);
 #endif
 #if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)

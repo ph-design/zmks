@@ -549,6 +549,34 @@ config ZMK_IDLE_SKIP_ON_USB_POWER
     bool "Skip idle state when USB cable is plugged in (VBUS powered)"
     depends on USB_DEVICE_STACK
 
+config ZMK_POWER_POLICY
+    def_bool y
+    depends on SETTINGS && !ZMK_2G4_DONGLE
+
+if ZMK_POWER_POLICY
+
+config ZMK_POWER_IDLE_TIMEOUT_MS
+    int "Default idle timeout (ms)"
+    range 0 86400000
+    default ZMK_IDLE_TIMEOUT
+    help
+      Inactivity before entering idle. Set to 0 to disable.
+
+config ZMK_POWER_IDLE_ON_USB
+    bool "Allow idle and light timeouts on USB power"
+    depends on USB_DEVICE_STACK
+    default y if !ZMK_IDLE_SKIP_ON_USB_POWER
+
+config ZMK_POWER_DEEP_SLEEP_TIMEOUT_MS
+    int "Default deep sleep timeout (ms)"
+    depends on ZMK_SLEEP
+    range 0 86400000
+    default ZMK_IDLE_SLEEP_TIMEOUT
+    help
+      Inactivity before entering System OFF on battery. Set to 0 to disable.
+
+endif # ZMK_POWER_POLICY
+
 config ZMK_UNRESPONSE_FIX
     bool "Hardware watchdog that auto-resets the MCU if the firmware hangs or crashes"
     depends on DT_HAS_NORDIC_NRF_WDT_ENABLED

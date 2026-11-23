@@ -14,6 +14,7 @@
 #include <zephyr/settings/settings.h>
 
 #include <zmk/activity.h>
+#include <zmk/power.h>
 #include <zmk/backlight.h>
 #include <zmk/usb.h>
 #include <zmk/event_manager.h>
@@ -42,7 +43,7 @@ struct backlight_state {
 static struct backlight_state state = {.brightness = CONFIG_ZMK_BACKLIGHT_BRT_START,
                                        .on = IS_ENABLED(CONFIG_ZMK_BACKLIGHT_ON_START)};
 
-#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
 static bool auto_off_idle_suppressed = false;
 #endif
 
@@ -52,7 +53,9 @@ static bool auto_off_usb_suppressed = false;
 
 static bool backlight_is_suppressed(void) {
     bool suppressed = false;
-#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    suppressed = suppressed || zmk_power_backlight_off();
+#elif IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
     suppressed = suppressed || auto_off_idle_suppressed;
 #endif
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
@@ -61,7 +64,7 @@ static bool backlight_is_suppressed(void) {
     return suppressed;
 }
 
-static int zmk_backlight_update(void) {
+int zmk_backlight_update(void) {
     uint8_t brt = backlight_is_suppressed() ? 0 : zmk_backlight_get_brt();
     LOG_DBG("Update backlight brightness: %d%%", brt);
 
@@ -169,10 +172,11 @@ uint8_t zmk_backlight_calc_brt_cycle(void) {
     }
 }
 
-#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) || IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
+#if (IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)) ||      \
+    IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
 static int backlight_event_listener(const zmk_event_t *eh) {
 
-#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
     if (as_zmk_activity_state_changed(eh)) {
         bool suppressed = zmk_activity_get_state() != ZMK_ACTIVITY_ACTIVE;
         if (auto_off_idle_suppressed == suppressed) {
@@ -198,10 +202,9 @@ static int backlight_event_listener(const zmk_event_t *eh) {
 }
 
 ZMK_LISTENER(backlight, backlight_event_listener);
-#endif // IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) ||
-       // IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_USB)
+#endif
 
-#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_BACKLIGHT_AUTO_OFF_IDLE) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
 ZMK_SUBSCRIPTION(backlight, zmk_activity_state_changed);
 #endif
 

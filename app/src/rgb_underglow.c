@@ -28,6 +28,7 @@
 #include <zmk/rgb_underglow_layer.h>
 
 #include <zmk/activity.h>
+#include <zmk/power.h>
 #include <zmk/behavior.h>
 #include <zmk/matrix.h>
 #include <zmk/hid_indicators.h>
@@ -228,7 +229,9 @@ static bool auto_off_usb_override;
 
 static bool underglow_is_suppressed(void) {
     bool suppressed = false;
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    suppressed = suppressed || zmk_power_rgb_off();
+#elif IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE)
     suppressed = suppressed || (zmk_activity_get_state() != ZMK_ACTIVITY_ACTIVE);
 #endif
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_USB)
@@ -1138,7 +1141,7 @@ int zmk_rgb_underglow_get_effect_count(void) {
 
 static int rgb_underglow_event_listener(const zmk_event_t *eh) {
 
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE)
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_IDLE) && !IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
     if (as_zmk_activity_state_changed(eh)) {
         zmk_rgb_underglow_apply_state();
         return ZMK_EV_EVENT_BUBBLE;

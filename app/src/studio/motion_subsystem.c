@@ -14,6 +14,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/motion.h>
 #include <zmk/motion_guard.h>
 #include <zmk/motion_tap.h>
+#include <zmk/power.h>
 #include <zmk/studio/rpc.h>
 #include <zmk/events/motion_live_state_changed.h>
 
@@ -110,6 +111,11 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     resp.tap_version = ready ? 2 : 0;
 #endif
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    resp.power_version = 1;
+    resp.power_lights = (IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW) ? BIT(0) : 0) |
+                        (IS_ENABLED(CONFIG_ZMK_BACKLIGHT) ? BIT(1) : 0);
 #endif
 
     return MOTION_RESPONSE(capabilities, resp);
@@ -333,6 +339,36 @@ ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_tap_test, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_tap_capture, ZMK_STUDIO_RPC_HANDLER_SECURED);
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+static zmk_studio_Response get_power_config(const zmk_studio_Request *req) {
+    struct zmk_power_config cfg;
+    zmk_power_get_config(&cfg);
+    return MOTION_RESPONSE(power_config, ((zmk_motion_PowerConfig){
+        .idle_timeout_ms = cfg.idle_timeout_ms,
+        .rgb_off_ms = cfg.rgb_off_ms,
+        .backlight_off_ms = cfg.backlight_off_ms,
+        .deep_sleep_ms = cfg.deep_sleep_ms,
+        .on_usb = cfg.on_usb,
+        .off_when_locked = cfg.off_when_locked,
+    }));
+}
+
+static zmk_studio_Response set_power_config(const zmk_studio_Request *req) {
+    const zmk_motion_PowerConfig *in = &req->subsystem.motion.request_type.set_power_config;
+    const struct zmk_power_config cfg = {
+        .idle_timeout_ms = in->idle_timeout_ms,
+        .rgb_off_ms = in->rgb_off_ms,
+        .backlight_off_ms = in->backlight_off_ms,
+        .deep_sleep_ms = in->deep_sleep_ms,
+        .on_usb = in->on_usb,
+        .off_when_locked = in->off_when_locked,
+    };
+    return MOTION_RESPONSE(set_power_config, zmk_power_set_config(&cfg) == 0);
+}
+
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_power_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_power_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+#endif
 
 static zmk_studio_Response save_state(const zmk_studio_Request *req) {
     int err = 0;
@@ -347,6 +383,11 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     if (!err) {
         err = zmk_tap_save();
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    if (!err) {
+        err = zmk_power_save_config();
     }
 #endif
     return MOTION_RESPONSE(save_state, err == 0);
@@ -367,6 +408,12 @@ static int reset_settings(void) {
     int guard_err = zmk_motion_guard_reset();
     if (!err) {
         err = guard_err;
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    int power_err = zmk_power_reset_config();
+    if (!err) {
+        err = power_err;
     }
 #endif
     return err;

@@ -6,6 +6,8 @@
 
 #pragma once
 
+int zmk_backlight_update(void);
+
 int zmk_backlight_on(void);
 int zmk_backlight_off(void);
 int zmk_backlight_toggle(void);

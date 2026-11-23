@@ -17,7 +17,7 @@ enum zmk_activity_state zmk_activity_get_state(void);
 void zmk_activity_force_sleep(void);
 void zmk_activity_note_activity(void);
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#if defined(CONFIG_ZMK_POWER_POLICY) || defined(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 void zmk_activity_note_key(uint32_t position, bool pressed);
 bool zmk_activity_input_recent(uint32_t quiet_ms);
 #endif
