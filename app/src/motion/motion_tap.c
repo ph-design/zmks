@@ -7,6 +7,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zmk/activity.h>
 #include <zmk/keymap.h>
+#include <zmk/motion_guard.h>
 #include <zmk/motion_sample.h>
 #include <zmk/motion_tap.h>
 #include <zmk/virtual_key_position.h>
@@ -32,6 +33,7 @@ static K_MUTEX_DEFINE(tap_config_lock);
 
 struct tap_event {
     uint32_t generation;
+    uint32_t guard_generation;
     int64_t timestamp;
     uint8_t src;
     bool test;
@@ -39,6 +41,10 @@ struct tap_event {
 
 static struct tap_event click_edge;
 K_MSGQ_DEFINE(tap_events, sizeof(struct tap_event), 8, 4);
+
+static uint32_t guard_generation(void) {
+    return IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) ? zmk_motion_guard_generation() : 0;
+}
 
 static void dispatch_tap(struct tap_event event) {
     if (k_mutex_lock(&tap_config_lock, K_NO_WAIT)) {
@@ -51,7 +57,9 @@ static void dispatch_tap(struct tap_event event) {
     bool dry = event.test || k_uptime_get() < test_until;
     k_spin_unlock(&tap_lock, key);
 
-    if (!eligible || zmk_activity_input_recent(opts.quiet_ms) ||
+    if (!eligible || event.guard_generation != guard_generation() ||
+        (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) ||
+        zmk_activity_input_recent(opts.quiet_ms) ||
         (cfg.layer_mask && !(zmk_keymap_layer_state() & cfg.layer_mask))) {
         key = k_spin_lock(&tap_lock);
         diagnostics.suppressed++;
@@ -286,6 +294,7 @@ void zmk_tap_gpio(void) {
     int64_t now = k_uptime_get();
     click_edge = (struct tap_event){
         .generation = generation,
+        .guard_generation = guard_generation(),
         .timestamp = now,
         .test = now < test_until,
     };

@@ -22,6 +22,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/physical_layouts.h>
 #include <zmk/event_manager.h>
 #include <zmk/activity.h>
+#include <zmk/motion_guard.h>
 #include <zmk/events/position_state_changed.h>
 
 ZMK_EVENT_IMPL(zmk_physical_layout_selection_changed);
@@ -169,6 +170,9 @@ size_t zmk_physical_layouts_get_list(struct zmk_physical_layout const *const **d
 #define ZMK_KSCAN_EVENT_STATE_RELEASED 1
 
 struct zmk_kscan_event {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    int64_t timestamp;
+#endif
     uint32_t row;
     uint32_t column;
     uint32_t state;
@@ -188,6 +192,9 @@ static void zmk_physical_layout_kscan_callback(const struct device *dev, uint32_
     }
 
     struct zmk_kscan_event ev = {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+        .timestamp = k_uptime_get(),
+#endif
         .row = row,
         .column = column,
         .state = (pressed ? ZMK_KSCAN_EVENT_STATE_PRESSED : ZMK_KSCAN_EVENT_STATE_RELEASED)};
@@ -217,11 +224,15 @@ static void zmk_physical_layouts_kscan_process_msgq(struct k_work *item) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
         zmk_activity_note_key(position, pressed);
 #endif
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+        zmk_motion_guard_key(position, pressed, ev.timestamp);
+#else
         raise_zmk_position_state_changed(
             (struct zmk_position_state_changed){.source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
                                                 .state = pressed,
                                                 .position = position,
                                                 .timestamp = k_uptime_get()});
+#endif
     }
 }
 

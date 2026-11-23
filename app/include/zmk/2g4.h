@@ -19,6 +19,7 @@ bool zmk_2g4_is_ready(void);
 int zmk_2g4_wait_for_tx(void);
 int zmk_2g4_send_background(const uint8_t *data, size_t len);
 int zmk_2g4_start(void);
+void zmk_2g4_motion_changed(void);
 int zmk_2g4_stop(void);
 bool zmk_2g4_dongle_kb_connected(void);
 void zmk_2g4_dongle_rx_stats(uint32_t *rx_total, uint32_t *decrypt_fail);

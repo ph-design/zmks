@@ -12,6 +12,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <pb_encode.h>
 #include <zmk/behavior.h>
 #include <zmk/motion.h>
+#include <zmk/motion_guard.h>
 #include <zmk/motion_tap.h>
 #include <zmk/studio/rpc.h>
 #include <zmk/events/motion_live_state_changed.h>
@@ -100,9 +101,12 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
     resp.supports_tap = ready;
     resp.supports_double_tap = ready;
     resp.supports_carry = ready;
-    resp.supports_still_wake = ready;
+    resp.supports_still_wake = ready && !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD);
     resp.supports_sleep_wake = ready && !IS_ENABLED(CONFIG_ZMK_MOTION_SAMPLER);
     resp.threshold_max = 127;
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    resp.guard_version = ready ? 1 : 0;
+#endif
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     resp.tap_version = ready ? 2 : 0;
 #endif
@@ -156,6 +160,15 @@ zmk_studio_Response get_carry_config(const zmk_studio_Request *req) {
     resp.enabled = cfg.enabled;
     resp.motion_threshold = cfg.motion_threshold;
     resp.motion_duration_ms = cfg.motion_duration_ms;
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    struct mg_config guard;
+    zmk_motion_guard_get_config(&guard);
+    resp.carried_settle_ms = guard.carried_settle_ms;
+    resp.brief_settle_ms = guard.brief_settle_ms;
+    resp.stable_span_mg = guard.stable_span_mg;
+    resp.departure_mg = guard.departure_mg;
+    resp.verify_ms = guard.verify_ms;
+#endif
 
     return MOTION_RESPONSE(carry_config, resp);
 }
@@ -168,7 +181,26 @@ zmk_studio_Response set_carry_config(const zmk_studio_Request *req) {
         .motion_duration_ms = in->motion_duration_ms,
     };
 
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    const struct mg_config guard = {
+        .carried_settle_ms = in->carried_settle_ms,
+        .brief_settle_ms = in->brief_settle_ms,
+        .stable_span_mg = in->stable_span_mg,
+        .departure_mg = in->departure_mg,
+        .verify_ms = in->verify_ms,
+    };
+    bool extended = guard.carried_settle_ms || guard.brief_settle_ms || guard.stable_span_mg ||
+                    guard.departure_mg || guard.verify_ms;
+    if (extended && !zmk_motion_guard_config_valid(&guard)) {
+        return MOTION_RESPONSE(set_carry_config, false);
+    }
+#endif
     int err = zmk_motion_set_carry_config(&cfg);
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    if (!err && extended) {
+        err = zmk_motion_guard_set_config(&guard);
+    }
+#endif
     return MOTION_RESPONSE(set_carry_config, err == 0);
 }
 
@@ -307,6 +339,11 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION)
     err = zmk_motion_save_state();
 #endif
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    if (!err) {
+        err = zmk_motion_guard_save();
+    }
+#endif
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     if (!err) {
         err = zmk_tap_save();
@@ -324,6 +361,12 @@ static int reset_settings(void) {
     int motion_err = zmk_motion_settings_reset();
     if (!err) {
         err = motion_err;
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    int guard_err = zmk_motion_guard_reset();
+    if (!err) {
+        err = guard_err;
     }
 #endif
     return err;

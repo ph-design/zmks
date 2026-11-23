@@ -27,6 +27,7 @@
 #include <zmk/usb.h>
 #include <zmk/usb_hid.h>
 #include <zmk/event_manager.h>
+#include <zmk/motion_guard.h>
 #if IS_ENABLED(CONFIG_ZMK_BLE)
 #include <zmk/events/ble_active_profile_changed.h>
 #endif
@@ -488,7 +489,7 @@ int zmk_endpoints_send_report(uint16_t usage_page) {
 }
 
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
-int zmk_endpoints_send_mouse_report() {
+static int send_mouse_report(void) {
     switch (current_instance.transport) {
     case ZMK_TRANSPORT_USB: {
 #if IS_ENABLED(CONFIG_ZMK_USB)
@@ -534,6 +535,14 @@ int zmk_endpoints_send_mouse_report() {
 
     LOG_ERR("Unhandled endpoint transport %d", current_instance.transport);
     return -ENOTSUP;
+}
+
+int zmk_endpoints_send_mouse_report() {
+    if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) {
+        zmk_hid_mouse_clear();
+        return 0;
+    }
+    return send_mouse_report();
 }
 #endif // IS_ENABLED(CONFIG_ZMK_POINTING)
 
@@ -715,7 +724,7 @@ void zmk_endpoints_clear_current(void) {
     zmk_endpoints_send_report(HID_USAGE_KEY);
     zmk_endpoints_send_report(HID_USAGE_CONSUMER);
 #if IS_ENABLED(CONFIG_ZMK_POINTING)
-    zmk_endpoints_send_mouse_report();
+    send_mouse_report();
 #endif
 }
 

@@ -13,10 +13,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/keycode_state_changed.h>
 #include <zmk/events/modifiers_state_changed.h>
 #include <zmk/hid.h>
+#include <zmk/motion_guard.h>
 #include <dt-bindings/zmk/hid_usage_pages.h>
 #include <zmk/endpoints.h>
 
 static int hid_listener_keycode_pressed(const struct zmk_keycode_state_changed *ev) {
+    if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) {
+        return 0;
+    }
     int err, explicit_mods_changed, implicit_mods_changed;
 
     if (!is_mod(ev->usage_page, ev->keycode) &&

@@ -18,6 +18,7 @@
 #include <zmk/2g4_crypto.h>
 #include <zmk/studio/radio.h>
 #include <zmk/battery.h>
+#include <zmk/motion_guard.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -120,11 +121,24 @@ static void keepalive_handler(struct k_work *work) {
         return;
     }
 
-    uint8_t data[] = {ZMK_2G4_MSG_KEEP_ALIVE,
-                      zmk_battery_is_valid() ? zmk_battery_state_of_charge() : 255};
-    zmk_2g4_send_background(data, sizeof(data));
+    uint8_t data[4] = {ZMK_2G4_MSG_KEEP_ALIVE,
+                       zmk_battery_is_valid() ? zmk_battery_state_of_charge() : 255};
+    size_t len = 2;
+    if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)) {
+        data[len++] = ZMK_2G4_KEEP_ALIVE_MOTION;
+        data[len++] =
+            zmk_motion_guard_locked() ? ZMK_2G4_MOTION_LOCKED : ZMK_2G4_MOTION_READY;
+    }
+
+    zmk_2g4_send_background(data, len);
 
     k_work_reschedule(&keepalive_work, K_MSEC(ZMK_2G4_KEEPALIVE_MS));
+}
+
+void zmk_2g4_motion_changed(void) {
+    if (ready) {
+        k_work_reschedule(&keepalive_work, K_NO_WAIT);
+    }
 }
 
 static void esb_event_handler(const struct zmk_esb_event *event) {

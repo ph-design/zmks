@@ -25,6 +25,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/motion_live_state_changed.h>
 #include <zmk/keymap.h>
 #include <zmk/motion.h>
+#include <zmk/motion_guard.h>
 #include <zmk/motion_sample.h>
 #include <zmk/motion_tap.h>
 #include <zmk/virtual_key_position.h>
@@ -33,6 +34,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #define IMU_DEV DEVICE_DT_GET(DT_CHOSEN(zmk_imu))
 
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 static const struct gpio_dt_spec imu_int2 =
     GPIO_DT_SPEC_GET_BY_IDX(DT_CHOSEN(zmk_imu), irq_gpios, 1);
 BUILD_ASSERT(DT_PROP_LEN(DT_CHOSEN(zmk_imu), irq_gpios) >= 2,
@@ -41,6 +43,7 @@ BUILD_ASSERT(DT_PROP_LEN(DT_CHOSEN(zmk_imu), irq_gpios) >= 2,
 // walking pace is ~2 Hz shock pulses; a longer gap breaks the streak
 #define CARRY_STEP_GAP_MS 2000
 #define CARRY_CHECK_PERIOD_MS 500
+#endif
 #define LIVE_PERIOD_MS 100
 // sample at the 50 Hz ODR so impulse peaks between pushes are not missed
 #define LIVE_SAMPLE_MS 20
@@ -112,6 +115,7 @@ static bool live_window_fetched;
 
 static const struct device *imu = IMU_DEV;
 
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 // carry streak state
 static int64_t streak_start;
 static int64_t last_motion;
@@ -126,6 +130,7 @@ static bool settle_armed;
 
 static void settle_check_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(settle_work, settle_check_work_cb);
+#endif
 
 #if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 // per-side single-tap state held back for one double-tap window
@@ -146,8 +151,10 @@ static struct pending_single pending_singles[TAP_SIDE_COUNT] = {
 static void motion_live_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(live_work, motion_live_work_cb);
 
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 static void carry_check_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(carry_work, carry_check_work_cb);
+#endif
 
 static bool binding_is_set(const struct zmk_behavior_binding *b) {
     return b && b->behavior_dev != NULL;
@@ -166,6 +173,9 @@ static bool tap_layer_active(void) {
 }
 
 static void fire_binding(struct zmk_behavior_binding *b, enum tap_side side) {
+    if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) {
+        return;
+    }
     if (!binding_is_set(b) || !tap_layer_active()) {
         return;
     }
@@ -253,6 +263,7 @@ static void single_fire_work_cb(struct k_work *work) {
 }
 #endif
 
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 static void carry_trigger_handler(const struct device *dev, const struct sensor_trigger *trig) {
     ARG_UNUSED(dev);
     ARG_UNUSED(trig);
@@ -354,6 +365,7 @@ static int carry_key_veto_listener(const zmk_event_t *eh) {
 
 ZMK_LISTENER(zmk_motion_carry_veto, carry_key_veto_listener);
 ZMK_SUBSCRIPTION(zmk_motion_carry_veto, zmk_position_state_changed);
+#endif
 
 static void motion_live_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
@@ -396,6 +408,9 @@ static void motion_live_work_cb(struct k_work *work) {
             if (IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)) {
                 live.tap_detected = zmk_tap_take_click(&live.last_click_src);
             }
+            if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)) {
+                live.carry_active = zmk_motion_guard_locked();
+            }
             live.magnitude = live_window_peak;
             live.orientation =
                 orientation_from_ums2(live_baseline[0], live_baseline[1], live_baseline[2]);
@@ -410,11 +425,13 @@ static void motion_live_work_cb(struct k_work *work) {
     k_work_schedule(&live_work, K_MSEC(LIVE_SAMPLE_MS));
 }
 
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 static void counts_to_ms2(uint32_t counts, struct sensor_value *v) {
     uint32_t ums2 = counts * THS_LSB_UMS2;
     v->val1 = ums2 / 1000000;
     v->val2 = ums2 % 1000000;
 }
+#endif
 
 #if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 static int apply_tap_hw(void) {
@@ -493,6 +510,10 @@ static int apply_sleep_wake_hw(void) {
 }
 
 static int apply_carry_hw(void) {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    zmk_motion_guard_set_enabled(carry_cfg.enabled);
+    return 0;
+#else
     static const struct sensor_trigger delta_trig = {.type = SENSOR_TRIG_DELTA,
                                                      .chan = SENSOR_CHAN_ACCEL_XYZ};
     struct sensor_value th;
@@ -515,13 +536,16 @@ static int apply_carry_hw(void) {
         settle_armed = false;
     }
     return 0;
+#endif
 }
 
 static void arm_boot_settle_check(void) {
+#if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
     if (carry_cfg.enabled && still_wake_cfg.enabled) {
         settle_armed = true;
         k_work_schedule(&settle_work, K_MSEC(still_wake_cfg.settle_duration_ms));
     }
+#endif
 }
 
 static int apply_motion_settings(void) {
@@ -599,6 +623,9 @@ int zmk_motion_get_still_wake_config(struct zmk_motion_still_wake_config *out) {
 }
 
 int zmk_motion_set_still_wake_config(const struct zmk_motion_still_wake_config *cfg) {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
+    return -ENOTSUP;
+#else
     still_wake_cfg = *cfg;
 
     if (!cfg->enabled) {
@@ -606,6 +633,7 @@ int zmk_motion_set_still_wake_config(const struct zmk_motion_still_wake_config *
         settle_armed = false;
     }
     return 0;
+#endif
 }
 
 int zmk_motion_get_sleep_wake_config(struct zmk_motion_sleep_wake_config *out) {

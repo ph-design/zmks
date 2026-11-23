@@ -23,6 +23,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <zmk/activity.h>
 #include <zmk/watchdog.h>
+#include <zmk/motion_guard.h>
 
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 #include <zmk/matrix.h>
@@ -119,8 +120,9 @@ static void activity_work_handler(struct k_work *work) {
     uint32_t current = k_uptime_get_32();
     uint32_t inactive_time = current - (uint32_t)atomic_get(&activity_last_uptime);
     bool usb_powered = is_usb_power_present();
+    bool locked = IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked();
 #if IS_ENABLED(CONFIG_ZMK_SLEEP)
-    if (inactive_time > MAX_SLEEP_MS && !usb_powered) {
+    if (inactive_time > MAX_SLEEP_MS && !usb_powered && !locked) {
         set_state(ZMK_ACTIVITY_SLEEP);
 
         if (zmk_pm_suspend_devices() < 0) {
@@ -136,8 +138,8 @@ static void activity_work_handler(struct k_work *work) {
         sys_poweroff();
     }
 #endif /* IS_ENABLED(CONFIG_ZMK_SLEEP) */
-    if (inactive_time > MAX_IDLE_MS &&
-        (!IS_ENABLED(CONFIG_ZMK_IDLE_SKIP_ON_USB_POWER) || !usb_powered)) {
+    if (locked || (inactive_time > MAX_IDLE_MS &&
+                   (!IS_ENABLED(CONFIG_ZMK_IDLE_SKIP_ON_USB_POWER) || !usb_powered))) {
         set_state(ZMK_ACTIVITY_IDLE);
     }
 }
