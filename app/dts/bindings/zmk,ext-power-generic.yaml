@@ -20,3 +20,6 @@ properties:
     type: int
     description: Number of milliseconds to delay after initializing driver
     required: false
+  power-on-delay-ms:
+    type: int
+    description: Time in milliseconds for the output to stabilize after runtime enable

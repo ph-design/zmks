@@ -28,6 +28,7 @@
 #include <zmk/rgb_underglow_layer.h>
 
 #include <zmk/activity.h>
+#include <zmk/battery.h>
 #include <zmk/power.h>
 #include <zmk/behavior.h>
 #include <zmk/matrix.h>
@@ -35,6 +36,7 @@
 #include <zmk/usb.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/activity_state_changed.h>
+#include <zmk/events/battery_state_changed.h>
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/events/underglow_color_changed.h>
 #include <zmk/events/layer_state_changed.h>
@@ -53,6 +55,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if DT_HAS_COMPAT_STATUS_OKAY(zmk_underglow_layer) && IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER)
 #define UNDERGLOW_LAYER_ENABLED 1
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) && IS_ENABLED(CONFIG_SETTINGS)
+#define UNDERGLOW_LAYER_WAKE 1
+#endif
 #endif
 
 static inline int effect_pixel_lookup(int led_idx) {
@@ -221,6 +226,16 @@ static struct rgb_underglow_state state;
                       IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_FADE))
 
 static atomic_t fade_config = ATOMIC_INIT(FADE_DEFAULT);
+#if IS_ENABLED(CONFIG_SETTINGS)
+static uint16_t saved_fade_config = FADE_DEFAULT;
+#endif
+
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+#define WAKE_LAYERS_KEY "rgb/underglow/wake_layers"
+#define WAKE_LAYERS_MASK (BIT_MASK(MIN(ZMK_KEYMAP_LAYERS_LEN, 32) - 1) << 1)
+static atomic_t wake_layers;
+static uint32_t saved_wake_layers;
+#endif
 
 // idle/unplugged only suppress rendering, state.on is untouched; USB state is read live
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_AUTO_OFF_USB)
@@ -250,7 +265,11 @@ static void user_color_rgb_float(struct color_rgb_float *rgb) {
 }
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-static const struct device *const ext_power = DEVICE_DT_GET(DT_INST(0, zmk_ext_power_generic));
+#define UNDERGLOW_POWER_NODE DT_INST(0, zmk_ext_power_generic)
+#define UNDERGLOW_POWER_ON_DELAY_MS DT_PROP_OR(UNDERGLOW_POWER_NODE, power_on_delay_ms, 0)
+
+static const struct device *const ext_power = DEVICE_DT_GET(UNDERGLOW_POWER_NODE);
+static int64_t underglow_power_ready_at;
 
 static int underglow_ext_power_set(bool on) {
     if (ext_power == NULL) {
@@ -558,17 +577,18 @@ static void zmk_rgb_underglow_apply_status_overlay(uint8_t top_layer) {
 }
 
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
-static void zmk_rgb_underglow_apply_layer_overlay(void) {
+static bool apply_layer_overlay(uint8_t layer) {
 #if IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
     if (!zmk_rgb_layer_is_enabled()) {
-        return;
+        return false;
     }
 #endif
-    uint8_t layer = rgb_underglow_top_layer();
     const struct zmk_behavior_binding *rgbmap = rgb_underglow_get_bindings(layer);
-    if (rgbmap == NULL)
-        return;
+    if (!rgbmap) {
+        return false;
+    }
 
+    bool lit = false;
     for (int i = 0; i < STRIP_NUM_PIXELS; i++) {
         uint8_t midx = rgb_pixel_lookup(i);
         if (midx >= ZMK_KEYMAP_LEN)
@@ -591,9 +611,42 @@ static void zmk_rgb_underglow_apply_layer_overlay(void) {
             /* Non-zero color overrides the effect pixel */
             pixels[i] =
                 hex_to_rgb_overlay((color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF);
+            lit |= pixels[i].r || pixels[i].g || pixels[i].b;
         }
         /* color == 0 (___) means transparent: keep the underlying effect pixel */
     }
+    return lit;
+}
+#endif
+
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+static bool render_wake_layer(void) {
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING)
+    if (zmk_battery_is_valid() && zmk_battery_state_of_charge() <= ZMK_BATTERY_CRITICAL_PERCENT) {
+        return false;
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    if (zmk_power_lights_locked()) {
+        return false;
+    }
+#endif
+    uint32_t active = zmk_keymap_layer_state() & (uint32_t)atomic_get(&wake_layers);
+    if (!active) {
+        return false;
+    }
+
+    for (int index = ZMK_KEYMAP_LAYERS_LEN - 1; index >= 0; index--) {
+        uint8_t layer = zmk_keymap_layer_index_to_id(index);
+        if (layer >= 32 || !(active & BIT(layer))) {
+            continue;
+        }
+        memset(pixels, 0, sizeof(pixels));
+        if (apply_layer_overlay(layer)) {
+            return true;
+        }
+    }
+    return false;
 }
 #endif
 
@@ -615,6 +668,9 @@ static uint32_t fade_position;
 static uint32_t fade_updated;
 static bool fade_target;
 static bool underglow_blank;
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+static bool wake_layer_lit;
+#endif
 
 static uint32_t underglow_fade_level(bool target, uint32_t duration, uint32_t now) {
     uint32_t delta = MIN(now - fade_updated, duration);
@@ -637,10 +693,19 @@ static uint32_t underglow_fade_level(bool target, uint32_t duration, uint32_t no
 static int underglow_clear(void) {
     fade_position = 0;
     fade_target = false;
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-    int err = underglow_ext_power_set(false);
-#else
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    wake_layer_lit = false;
+#endif
     memset(pixels, 0, sizeof(pixels));
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (ext_power_get(ext_power) > 0 && k_uptime_get() >= underglow_power_ready_at) {
+        underglow_write_pixels();
+    }
+    int err = underglow_ext_power_set(false);
+    if (err == 0) {
+        underglow_power_ready_at = 0;
+    }
+#else
     int err = underglow_write_pixels();
 #endif
     underglow_blank = err == 0;
@@ -660,7 +725,7 @@ static void underglow_render_frame(void) {
         rgb_float_to_led(i, &fx_pixels[i], &pixels[i]);
     }
 #if IS_ENABLED(UNDERGLOW_LAYER_ENABLED)
-    zmk_rgb_underglow_apply_layer_overlay();
+    apply_layer_overlay(rgb_underglow_top_layer());
 #endif
     zmk_rgb_underglow_apply_status_overlay(rgb_underglow_top_layer());
 }
@@ -676,35 +741,46 @@ static void zmk_rgb_underglow_tick(struct k_work *work) {
     uint32_t now = k_uptime_get_32();
     uint32_t config = atomic_get(&fade_config);
     uint32_t duration = (config & FADE_ENABLED) ? config >> 1 : 0;
-    bool was_lit = fade_position != 0;
     bool target = underglow_should_render();
-    uint32_t level = underglow_fade_level(target, duration, now);
+    bool layer_only = false;
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    layer_only = !target && render_wake_layer();
+    if (layer_only || wake_layer_lit) {
+        duration = 0;
+    }
+    wake_layer_lit = layer_only;
+#endif
+    target |= layer_only;
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
+    if (target && (underglow_blank || !fade_position) && ext_power_get(ext_power) <= 0) {
+        if (underglow_ext_power_set(true)) {
+            return;
+        }
+        underglow_blank = false;
+        underglow_power_ready_at = k_uptime_get() + UNDERGLOW_POWER_ON_DELAY_MS;
+    }
+
+    int64_t power_wait = underglow_power_ready_at - k_uptime_get();
+    if (target && power_wait > 0) {
+        k_work_schedule_for_queue(zmk_workqueue_lowprio_work_q(), k_work_delayable_from_work(work),
+                                  K_MSEC(power_wait));
+        return;
+    }
+#endif
+
+    uint32_t level = underglow_fade_level(target, duration, now);
     if (!target && !fade_position) {
         if (!underglow_blank) {
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-            if (was_lit && duration && ext_power_get(ext_power) > 0) {
-                memset(pixels, 0, sizeof(pixels));
-                underglow_write_pixels();
-            }
-#endif
             underglow_clear();
         }
         return;
     }
 
-#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW_EXT_POWER)
-    if (target && (underglow_blank || !was_lit) && ext_power_get(ext_power) <= 0 &&
-        underglow_ext_power_set(true)) {
-        fade_position = 0;
-        fade_target = false;
-        return;
-    }
-#else
-    ARG_UNUSED(was_lit);
-#endif
     underglow_blank = false;
-    underglow_render_frame();
+    if (!layer_only) {
+        underglow_render_frame();
+    }
     if (level < FADE_SCALE) {
         for (size_t i = 0; i < STRIP_NUM_PIXELS; i++) {
             pixels[i].r = pixels[i].r * level / FADE_SCALE;
@@ -741,9 +817,22 @@ static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_
             (value >> 1) > ZMK_RGB_UNDERGLOW_FADE_MAX_MS) {
             return rc < 0 ? rc : -EINVAL;
         }
+        saved_fade_config = value;
         atomic_set(&fade_config, value);
         return 0;
     }
+
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    if (settings_name_steq(name, "wake_layers", &next) && !next) {
+        uint32_t value;
+        if (len != sizeof(value) || read_cb(cb_arg, &value, len) != sizeof(value)) {
+            return -EINVAL;
+        }
+        saved_wake_layers = value & WAKE_LAYERS_MASK;
+        atomic_set(&wake_layers, saved_wake_layers);
+        return 0;
+    }
+#endif
 
     if (settings_name_steq(name, "state", &next) && !next) {
         if (len != sizeof(state)) {
@@ -925,20 +1014,24 @@ void zmk_rgb_underglow_get_fade(bool *enabled, uint32_t *duration_ms) {
     *duration_ms = config >> 1;
 }
 
+#if IS_ENABLED(CONFIG_SETTINGS)
+static int save_fade_config(uint16_t value) {
+    if (value == saved_fade_config) {
+        return 0;
+    }
+    int err = settings_save_one("rgb/underglow/fade", &value, sizeof(value));
+    if (!err) {
+        saved_fade_config = value;
+    }
+    return err;
+}
+#endif
+
 int zmk_rgb_underglow_set_fade(bool enabled, uint32_t duration_ms) {
     if (duration_ms < 1 || duration_ms > ZMK_RGB_UNDERGLOW_FADE_MAX_MS) {
         return -EINVAL;
     }
-    uint16_t config = (duration_ms << 1) | enabled;
-#if IS_ENABLED(CONFIG_SETTINGS)
-    if (config != atomic_get(&fade_config)) {
-        int err = settings_save_one("rgb/underglow/fade", &config, sizeof(config));
-        if (err < 0) {
-            return err;
-        }
-    }
-#endif
-    atomic_set(&fade_config, config);
+    atomic_set(&fade_config, (duration_ms << 1) | enabled);
     return zmk_rgb_underglow_apply_state();
 }
 
@@ -949,8 +1042,99 @@ int zmk_rgb_underglow_reset_fade(void) {
         return err;
     }
 #endif
+#if IS_ENABLED(CONFIG_SETTINGS)
+    saved_fade_config = FADE_DEFAULT;
+#endif
     atomic_set(&fade_config, FADE_DEFAULT);
     return zmk_rgb_underglow_apply_state();
+}
+
+bool zmk_rgb_underglow_get_wake_layers(uint32_t *layers) {
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    *layers = (uint32_t)atomic_get(&wake_layers);
+    return true;
+#else
+    return false;
+#endif
+}
+
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+static int save_wake_layers(uint32_t layers) {
+    if (layers == saved_wake_layers) {
+        return 0;
+    }
+    int err = settings_save_one(WAKE_LAYERS_KEY, &layers, sizeof(layers));
+    if (!err) {
+        saved_wake_layers = layers;
+    }
+    return err;
+}
+#endif
+
+int zmk_rgb_underglow_set_wake_layers(uint32_t layers) {
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    if (layers & ~WAKE_LAYERS_MASK) {
+        return -EINVAL;
+    }
+    atomic_set(&wake_layers, layers);
+    return zmk_rgb_underglow_apply_state();
+#else
+    return -ENOTSUP;
+#endif
+}
+
+int zmk_rgb_underglow_reset_wake_layers(void) {
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    int err = settings_delete(WAKE_LAYERS_KEY);
+    if (err < 0 && err != -ENOENT) {
+        return err;
+    }
+    saved_wake_layers = 0;
+    atomic_clear(&wake_layers);
+    return zmk_rgb_underglow_apply_state();
+#else
+    return 0;
+#endif
+}
+
+bool zmk_rgb_underglow_general_changed(void) {
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    if ((uint32_t)atomic_get(&wake_layers) != saved_wake_layers) {
+        return true;
+    }
+#endif
+#if IS_ENABLED(CONFIG_SETTINGS)
+    return atomic_get(&fade_config) != saved_fade_config;
+#else
+    return false;
+#endif
+}
+
+int zmk_rgb_underglow_save_general(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    int err = save_fade_config(atomic_get(&fade_config));
+    if (err < 0) {
+        return err;
+    }
+#endif
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    return save_wake_layers(atomic_get(&wake_layers));
+#else
+    return 0;
+#endif
+}
+
+void zmk_rgb_underglow_discard_general(void) {
+    if (!zmk_rgb_underglow_general_changed()) {
+        return;
+    }
+#if IS_ENABLED(CONFIG_SETTINGS)
+    atomic_set(&fade_config, saved_fade_config);
+#endif
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    atomic_set(&wake_layers, saved_wake_layers);
+#endif
+    zmk_rgb_underglow_apply_state();
 }
 
 int zmk_rgb_underglow_on(void) {
@@ -1148,9 +1332,15 @@ static int rgb_underglow_event_listener(const zmk_event_t *eh) {
     }
 #endif
 
-    /* Layer overlay is applied in the tick automatically;
-     * layer_state_changed and underglow_color_changed events
-     * are handled implicitly since the overlay reads current state each frame. */
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+    if (as_zmk_layer_state_changed(eh) || as_zmk_underglow_color_changed(eh) ||
+        (IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING) && as_zmk_battery_state_changed(eh))) {
+        if (atomic_get(&wake_layers)) {
+            zmk_rgb_underglow_apply_state();
+        }
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+#endif
 
     /* Handle keypress events for key-interactive effects (ripple, reactive, etc.) */
     if (as_zmk_position_state_changed(eh)) {
@@ -1185,7 +1375,13 @@ ZMK_SUBSCRIPTION(rgb_underglow, zmk_activity_state_changed);
 ZMK_SUBSCRIPTION(rgb_underglow, zmk_usb_conn_state_changed);
 #endif
 
-/* Layer overlay is handled in the tick; no explicit subscriptions needed. */
+#if IS_ENABLED(UNDERGLOW_LAYER_WAKE)
+ZMK_SUBSCRIPTION(rgb_underglow, zmk_layer_state_changed);
+ZMK_SUBSCRIPTION(rgb_underglow, zmk_underglow_color_changed);
+#if IS_ENABLED(CONFIG_ZMK_BATTERY_REPORTING)
+ZMK_SUBSCRIPTION(rgb_underglow, zmk_battery_state_changed);
+#endif
+#endif
 
 /* Subscribe to key position events for key-interactive effects */
 ZMK_SUBSCRIPTION(rgb_underglow, zmk_position_state_changed);

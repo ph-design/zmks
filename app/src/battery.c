@@ -121,7 +121,7 @@ static int zmk_battery_update(const struct device *battery) {
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
     // Auto-off RGB underglow when battery is critically low to save power
-    if (state_of_charge.val1 <= 5) {
+    if (state_of_charge.val1 <= ZMK_BATTERY_CRITICAL_PERCENT) {
         if (!rgb_off_by_low_bat) {
             bool rgb_on = false;
             zmk_rgb_underglow_get_state(&rgb_on);

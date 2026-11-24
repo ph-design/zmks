@@ -18,6 +18,13 @@ LOG_MODULE_DECLARE(zmk_studio, CONFIG_ZMK_STUDIO_LOG_LEVEL);
 #include <zmk/physical_layouts.h>
 #include <zmk/behavior_hold_tap.h>
 
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+#include <zmk/rgb_underglow.h>
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+#include <zmk/power.h>
+#endif
+#endif
+
 #if IS_ENABLED(CONFIG_EXPERIMENTAL_RGB_LAYER) && IS_ENABLED(CONFIG_ZMK_KEYMAP_SETTINGS_STORAGE)
 #include <zmk/rgb_underglow_layer.h>
 #endif
@@ -283,6 +290,13 @@ zmk_studio_Response discard_changes(const zmk_studio_Request *req) {
 
     raise_zmk_studio_rpc_notification((struct zmk_studio_rpc_notification){
         .notification = KEYMAP_NOTIFICATION(unsaved_changes_status_changed, false)});
+
+#if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
+    zmk_rgb_underglow_discard_general();
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    zmk_power_discard_rgb_idle();
+#endif
+#endif
 
     return KEYMAP_RESPONSE(discard_changes, true);
 }

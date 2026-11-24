@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define ZMK_RGB_UNDERGLOW_FADE_MAX_MS 1000
+#define ZMK_RGB_UNDERGLOW_FADE_MAX_MS 2000
 
 struct zmk_led_hsb {
     uint16_t h;
@@ -28,6 +28,12 @@ void zmk_rgb_underglow_resume(void);
 void zmk_rgb_underglow_get_fade(bool *enabled, uint32_t *duration_ms);
 int zmk_rgb_underglow_set_fade(bool enabled, uint32_t duration_ms);
 int zmk_rgb_underglow_reset_fade(void);
+bool zmk_rgb_underglow_get_wake_layers(uint32_t *layers);
+int zmk_rgb_underglow_set_wake_layers(uint32_t layers);
+int zmk_rgb_underglow_reset_wake_layers(void);
+bool zmk_rgb_underglow_general_changed(void);
+int zmk_rgb_underglow_save_general(void);
+void zmk_rgb_underglow_discard_general(void);
 int zmk_rgb_underglow_transient_on(void);
 int zmk_rgb_underglow_transient_off(void);
 int zmk_rgb_underglow_cycle_effect(int direction);

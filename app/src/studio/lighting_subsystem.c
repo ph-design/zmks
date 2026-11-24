@@ -13,6 +13,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
 #include <zmk/rgb_underglow.h>
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+#include <zmk/power.h>
+#endif
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_BACKLIGHT)
@@ -86,8 +89,21 @@ static zmk_studio_Response get_rgb_underglow_state(const zmk_studio_Request *req
     resp.speed = (uint32_t)zmk_rgb_underglow_get_speed();
     resp.effect_count = (uint32_t)zmk_rgb_underglow_get_effect_count();
     resp.effect_names.funcs.encode = encode_effect_names;
+#if IS_ENABLED(CONFIG_SETTINGS)
+    resp.has_general_changes_pending = true;
+    resp.general_changes_pending = zmk_rgb_underglow_general_changed();
+#endif
     resp.has_fade = true;
     zmk_rgb_underglow_get_fade(&resp.fade.enabled, &resp.fade.duration_ms);
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    struct zmk_power_config cfg;
+    zmk_power_get_config(&cfg);
+    resp.has_idle = true;
+    resp.idle.timeout_ms = cfg.rgb_off_ms;
+    resp.idle.sleep_on_usb = zmk_power_rgb_on_usb(&cfg);
+    resp.general_changes_pending |= zmk_power_rgb_idle_changed();
+#endif
+    resp.has_layer_wake = zmk_rgb_underglow_get_wake_layers(&resp.layer_wake.layers);
 
     return LIGHTING_RESPONSE(get_rgb_underglow_state, resp);
 }
@@ -123,6 +139,15 @@ static zmk_studio_Response set_rgb_underglow_state(const zmk_studio_Request *req
     case zmk_lighting_SetRgbUnderglowStateRequest_fade_tag:
         ret = zmk_rgb_underglow_set_fade(set_req->field.fade.enabled,
                                          set_req->field.fade.duration_ms);
+        break;
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    case zmk_lighting_SetRgbUnderglowStateRequest_idle_tag:
+        ret = zmk_power_set_rgb_idle(set_req->field.idle.timeout_ms,
+                                     set_req->field.idle.sleep_on_usb);
+        break;
+#endif
+    case zmk_lighting_SetRgbUnderglowStateRequest_layer_wake_tag:
+        ret = zmk_rgb_underglow_set_wake_layers(set_req->field.layer_wake.layers);
         break;
     default:
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
@@ -184,7 +209,15 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
     LOG_DBG("");
 
 #if IS_ENABLED(CONFIG_ZMK_RGB_UNDERGLOW)
-    int ret = zmk_rgb_underglow_save_state();
+    int ret = zmk_rgb_underglow_save_general();
+#if IS_ENABLED(CONFIG_ZMK_POWER_POLICY)
+    if (ret == 0) {
+        ret = zmk_power_save_rgb_idle();
+    }
+#endif
+    if (ret == 0) {
+        ret = zmk_rgb_underglow_save_state();
+    }
     if (ret < 0) {
         LOG_ERR("Failed to save RGB underglow state: %d", ret);
         return LIGHTING_RESPONSE(save_state, false);
@@ -434,6 +467,10 @@ static int lighting_settings_reset(void) {
         return ret;
     }
     ret = zmk_rgb_underglow_reset_fade();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = zmk_rgb_underglow_reset_wake_layers();
     if (ret < 0) {
         return ret;
     }

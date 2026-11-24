@@ -355,14 +355,14 @@ static zmk_studio_Response get_power_config(const zmk_studio_Request *req) {
 
 static zmk_studio_Response set_power_config(const zmk_studio_Request *req) {
     const zmk_motion_PowerConfig *in = &req->subsystem.motion.request_type.set_power_config;
-    const struct zmk_power_config cfg = {
-        .idle_timeout_ms = in->idle_timeout_ms,
-        .rgb_off_ms = in->rgb_off_ms,
-        .backlight_off_ms = in->backlight_off_ms,
-        .deep_sleep_ms = in->deep_sleep_ms,
-        .on_usb = in->on_usb,
-        .off_when_locked = in->off_when_locked,
-    };
+    struct zmk_power_config cfg;
+    zmk_power_get_config(&cfg);
+    cfg.idle_timeout_ms = in->idle_timeout_ms;
+    cfg.rgb_off_ms = in->rgb_off_ms;
+    cfg.backlight_off_ms = in->backlight_off_ms;
+    cfg.deep_sleep_ms = in->deep_sleep_ms;
+    cfg.on_usb = in->on_usb;
+    cfg.off_when_locked = in->off_when_locked;
     return MOTION_RESPONSE(set_power_config, zmk_power_set_config(&cfg) == 0);
 }
 

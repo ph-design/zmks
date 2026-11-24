@@ -413,7 +413,7 @@ config ZMK_RGB_UNDERGLOW_FADE
 
 config ZMK_RGB_UNDERGLOW_FADE_MS
     int "Default RGB underglow fade time (ms)"
-    range 1 1000
+    range 1 2000
     default 180
 
 config ZMK_RGB_UNDERGLOW_BRT_MIN
