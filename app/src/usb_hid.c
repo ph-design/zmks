@@ -29,6 +29,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 static const struct device *hid_dev;
 
 static K_SEM_DEFINE(hid_sem, 1, 1);
+static K_MUTEX_DEFINE(hid_tx_lock);
+static uint32_t hid_connection_id;
 
 static void in_ready_cb(const struct device *dev) { k_sem_give(&hid_sem); }
 
@@ -199,20 +201,32 @@ static bool can_send_report(uint32_t connection_id) {
 }
 
 int zmk_usb_hid_send_report(const uint8_t *report, size_t len, uint32_t connection_id) {
-    if (!can_send_report(connection_id)) {
-        return -ENODEV;
+    k_timeout_t timeout = K_TIMEOUT_ABS_MS(k_uptime_get() + 30);
+    int err = k_mutex_lock(&hid_tx_lock, timeout);
+    if (err) {
+        return err;
     }
-    int slot = k_sem_take(&hid_sem, K_MSEC(30));
+
     if (!can_send_report(connection_id)) {
-        if (!slot) {
-            k_sem_give(&hid_sem);
-        }
-        return -ENODEV;
+        err = -ENODEV;
+        goto unlock;
     }
-    int err = hid_int_ep_write(hid_dev, report, len, NULL);
+    if (hid_connection_id != connection_id) {
+        hid_connection_id = connection_id;
+        k_sem_give(&hid_sem);
+    }
+
+    err = k_sem_take(&hid_sem, timeout);
+    if (err) {
+        goto unlock;
+    }
+    err = can_send_report(connection_id) ? hid_int_ep_write(hid_dev, report, len, NULL) : -ENODEV;
     if (err) {
         k_sem_give(&hid_sem);
     }
+
+unlock:
+    k_mutex_unlock(&hid_tx_lock);
     return err;
 }
 
