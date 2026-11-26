@@ -295,7 +295,7 @@ config ZMK_2G4_RETRANSMIT_COUNT
 config ZMK_2G4_RETRANSMIT_DELAY
     int "Retransmit delay (us)"
     default 500
-    range 500 1000
+    range 150 1000
 
 config ZMK_2G4_MAX_CONSEC_FAILURES
     int "Max consecutive TX failures before link considered lost"
