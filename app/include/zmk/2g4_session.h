@@ -13,6 +13,7 @@
 #define ZMK_2G4_SESSION_CONFIRM 0xF2
 #define ZMK_2G4_SESSION_READY 0xF3
 #define ZMK_2G4_SESSION_HELLO 0xF4
+#define ZMK_2G4_SESSION_READY_ACK 0xF5
 #define ZMK_2G4_SESSION_NONCE_SIZE 12
 #define ZMK_2G4_SESSION_FRAME_SIZE 17
 
@@ -22,6 +23,7 @@ enum zmk_2g4_session_state {
     ZMK_2G4_SESSION_WAIT_CONFIRM,
     ZMK_2G4_SESSION_WAIT_READY,
     ZMK_2G4_SESSION_SEND_READY,
+    ZMK_2G4_SESSION_WAIT_READY_ACK,
     ZMK_2G4_SESSION_ESTABLISHED,
 };
 
@@ -31,6 +33,7 @@ struct zmk_2g4_session {
     uint32_t local_epoch;
     uint32_t peer_epoch;
     uint8_t nonce[ZMK_2G4_SESSION_NONCE_SIZE];
+    bool ready_ack_pending;
 };
 
 void zmk_2g4_session_init(struct zmk_2g4_session *session, uint32_t epoch);

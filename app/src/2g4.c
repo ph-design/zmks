@@ -24,7 +24,11 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static bool ready;
-static struct k_work_delayable keepalive_work;
+static void keepalive_handler(struct k_work *work);
+static void session_work_handler(struct k_work *work);
+static void send_current_reports(void);
+static K_WORK_DELAYABLE_DEFINE(keepalive_work, keepalive_handler);
+static K_WORK_DELAYABLE_DEFINE(session_work, session_work_handler);
 
 #define ZMK_2G4_KEEPALIVE_MS 250
 #define ZMK_2G4_AUTH_RETRY_MS 20
@@ -67,7 +71,7 @@ static void drain_hid_reports(void) {
     struct hid_report report;
     while (k_msgq_peek(&hid_reports, &report) == 0) {
         int ret = send_payload(report.data, report.len, false);
-        if (ret == -ENOMEM) {
+        if (ret == -ENOMEM || ret == -EAGAIN) {
             break;
         }
         k_msgq_get(&hid_reports, &report, K_NO_WAIT);
@@ -86,14 +90,13 @@ static void update_indicators(uint8_t indicators) {
 #endif
 }
 
-static struct k_work_delayable session_work;
-
 static void session_work_handler(struct k_work *work) {
     ARG_UNUSED(work);
+    k_mutex_lock(&tx_lock, K_FOREVER);
     if (!ready) {
+        k_mutex_unlock(&tx_lock);
         return;
     }
-    bool was_ready = zmk_2g4_crypto_link_ready();
     struct zmk_esb_payload payload = {.pipe = 0, .noack = false};
     uint8_t type;
     int len = zmk_2g4_crypto_session_tx(payload.data, sizeof(payload.data), &type);
@@ -103,17 +106,13 @@ static void session_work_handler(struct k_work *work) {
             zmk_2g4_crypto_session_sent(type);
         }
     }
-    if (!was_ready && zmk_2g4_crypto_link_ready()) {
-        LOG_INF("2.4G authenticated");
-        zmk_2g4_send_keyboard_report();
-        zmk_2g4_send_consumer_report();
-    }
     if (!zmk_2g4_crypto_link_ready()) {
         uint32_t delay = consec_fail_count >= CONFIG_ZMK_2G4_MAX_CONSEC_FAILURES
                              ? ZMK_2G4_KEEPALIVE_MS
                              : ZMK_2G4_AUTH_RETRY_MS;
         k_work_reschedule(&session_work, K_MSEC(delay));
     }
+    k_mutex_unlock(&tx_lock);
 }
 
 static void keepalive_handler(struct k_work *work) {
@@ -142,6 +141,7 @@ void zmk_2g4_motion_changed(void) {
 }
 
 static void esb_event_handler(const struct zmk_esb_event *event) {
+    bool resync = false;
     switch (event->evt_id) {
     case ZMK_ESB_EVENT_TX_SUCCESS:
         consec_fail_count = 0;
@@ -159,8 +159,28 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
         break;
     case ZMK_ESB_EVENT_RX_RECEIVED: {
         struct zmk_esb_payload rx;
-        while (zmk_esb_read_rx_payload(&rx) == 0) {
+        for (;;) {
+            k_mutex_lock(&tx_lock, K_FOREVER);
+            if (!ready || zmk_esb_read_rx_payload(&rx)) {
+                k_mutex_unlock(&tx_lock);
+                break;
+            }
+
+            bool was_ready = zmk_2g4_crypto_link_ready();
             int len = zmk_2g4_crypto_decrypt(rx.data, rx.length);
+            if (len == 0 || (!was_ready && len > 0)) {
+                bool authenticated = zmk_2g4_crypto_link_ready();
+                if (authenticated != was_ready) {
+                    if (!authenticated) {
+                        k_msgq_purge(&hid_reports);
+                        zmk_esb_flush_tx();
+                    }
+                    resync_reports = false;
+                    resync = authenticated;
+                }
+            }
+            k_mutex_unlock(&tx_lock);
+
             if (len == 0) {
                 k_work_reschedule(&session_work, K_NO_WAIT);
             }
@@ -170,12 +190,14 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
                 studio_radio_received(rx.data, len);
             }
         }
+        if (resync) {
+            LOG_INF("2.4G authenticated");
+        }
         break;
     }
     }
 
     k_mutex_lock(&tx_lock, K_FOREVER);
-    bool resync = false;
     if (ready) {
         resync_reports |= event->evt_id == ZMK_ESB_EVENT_TX_FAILED;
         drain_hid_reports();
@@ -187,8 +209,7 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
     }
     k_mutex_unlock(&tx_lock);
     if (resync) {
-        zmk_2g4_send_keyboard_report();
-        zmk_2g4_send_consumer_report();
+        send_current_reports();
     }
 }
 
@@ -197,14 +218,19 @@ static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
         return -EMSGSIZE;
     }
     struct hid_report report = {.len = (uint8_t)(len + 1), .data = {report_type}};
-    memcpy(&report.data[1], body, len);
-
     k_mutex_lock(&tx_lock, K_FOREVER);
     int ret = -ENODEV;
     if (ready) {
-        ret = k_msgq_num_used_get(&hid_reports) ? -ENOMEM
-                                              : send_payload(report.data, report.len, false);
-        if (ret == -ENOMEM) {
+        memcpy(&report.data[1], body, len);
+        if (k_msgq_num_used_get(&hid_reports)) {
+            ret = zmk_2g4_crypto_link_ready() ? -ENOMEM : -EAGAIN;
+        } else {
+            ret = send_payload(report.data, report.len, false);
+        }
+        if (ret == -EAGAIN && report_type != ZMK_2G4_MSG_BOOT) {
+            // The current HID state is sent when authentication completes.
+            ret = 0;
+        } else if (ret == -ENOMEM || ret == -EAGAIN) {
             ret = k_msgq_put(&hid_reports, &report, K_NO_WAIT);
             if (ret) {
                 resync_reports = true;
@@ -238,6 +264,19 @@ int zmk_2g4_send_mouse_report(void) {
                        sizeof(report->body));
 }
 #endif
+
+static void send_current_reports(void) {
+    k_mutex_lock(&tx_lock, K_FOREVER);
+    zmk_2g4_send_keyboard_report();
+    zmk_2g4_send_consumer_report();
+#if IS_ENABLED(CONFIG_ZMK_POINTING)
+    struct zmk_hid_mouse_report_body mouse = {
+        .buttons = zmk_hid_get_mouse_report()->body.buttons,
+    };
+    send_report(ZMK_2G4_MSG_MOUSE_REPORT, (const uint8_t *)&mouse, sizeof(mouse));
+#endif
+    k_mutex_unlock(&tx_lock);
+}
 
 static int send_boot_announcement(void) {
     uint32_t reset_cause = 0;
@@ -294,9 +333,6 @@ int zmk_2g4_start(void) {
     if (auth_err) {
         return auth_err;
     }
-    k_work_init_delayable(&session_work, session_work_handler);
-    k_work_init_delayable(&keepalive_work, keepalive_handler);
-
     struct zmk_esb_config config = {
         .mode = ZMK_ESB_MODE_PTX,
         .bitrate = ZMK_ESB_BITRATE_2MBPS,

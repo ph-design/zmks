@@ -21,7 +21,7 @@ bool zmk_2g4_session_ready(const struct zmk_2g4_session *session) {
 }
 
 static bool is_control(uint8_t type) {
-    return type >= ZMK_2G4_SESSION_CHALLENGE && type <= ZMK_2G4_SESSION_HELLO;
+    return type >= ZMK_2G4_SESSION_CHALLENGE && type <= ZMK_2G4_SESSION_READY_ACK;
 }
 
 static bool matches(const struct zmk_2g4_session *session, const uint8_t *data, size_t len,
@@ -58,6 +58,7 @@ int zmk_2g4_session_receive(struct zmk_2g4_session *session, const uint8_t *data
             memcpy(session->nonce, nonce, sizeof(nonce));
             session->peer_epoch = peer_epoch;
             session->state = ZMK_2G4_SESSION_WAIT_RESPONSE;
+            session->ready_ack_pending = false;
         }
         return -EAGAIN;
     }
@@ -71,8 +72,9 @@ int zmk_2g4_session_receive(struct zmk_2g4_session *session, const uint8_t *data
     }
     if (data[0] == ZMK_2G4_SESSION_READY && (session->state == ZMK_2G4_SESSION_WAIT_READY ||
                                              session->state == ZMK_2G4_SESSION_ESTABLISHED)) {
+        *fresh = session->state == ZMK_2G4_SESSION_WAIT_READY;
         session->state = ZMK_2G4_SESSION_ESTABLISHED;
-        *fresh = true;
+        session->ready_ack_pending = true;
         return 0;
     }
 #else
@@ -92,14 +94,29 @@ int zmk_2g4_session_receive(struct zmk_2g4_session *session, const uint8_t *data
         matches(session, data, len, session->local_epoch) &&
         (session->state == ZMK_2G4_SESSION_WAIT_CONFIRM ||
          session->state == ZMK_2G4_SESSION_SEND_READY ||
+         session->state == ZMK_2G4_SESSION_WAIT_READY_ACK ||
          session->state == ZMK_2G4_SESSION_ESTABLISHED)) {
-        session->state = ZMK_2G4_SESSION_SEND_READY;
-        *fresh = true;
+        if (!zmk_2g4_session_ready(session)) {
+            session->state = ZMK_2G4_SESSION_SEND_READY;
+            *fresh = true;
+        }
         return 0;
     }
-    if (!is_control(data[0]) && zmk_2g4_session_ready(session) &&
-        peer_epoch == session->peer_epoch) {
-        return 1;
+    if (data[0] == ZMK_2G4_SESSION_READY_ACK && peer_epoch == session->peer_epoch &&
+        matches(session, data, len, session->local_epoch) &&
+        (session->state == ZMK_2G4_SESSION_WAIT_READY_ACK ||
+         zmk_2g4_session_ready(session))) {
+        session->state = ZMK_2G4_SESSION_ESTABLISHED;
+        return 0;
+    }
+    if (!is_control(data[0]) && peer_epoch == session->peer_epoch) {
+        // A legacy receiver can only send authenticated data after accepting READY.
+        if (session->state == ZMK_2G4_SESSION_WAIT_READY_ACK) {
+            session->state = ZMK_2G4_SESSION_ESTABLISHED;
+        }
+        if (zmk_2g4_session_ready(session)) {
+            return 1;
+        }
     }
 #endif
     return -EACCES;
@@ -112,6 +129,8 @@ int zmk_2g4_session_prepare(const struct zmk_2g4_session *session, uint8_t *data
         type = ZMK_2G4_SESSION_CHALLENGE;
     } else if (session->state == ZMK_2G4_SESSION_WAIT_READY) {
         type = ZMK_2G4_SESSION_CONFIRM;
+    } else if (session->ready_ack_pending) {
+        type = ZMK_2G4_SESSION_READY_ACK;
     } else {
         return 0;
     }
@@ -125,7 +144,8 @@ int zmk_2g4_session_prepare(const struct zmk_2g4_session *session, uint8_t *data
         return 1;
     } else if (session->state == ZMK_2G4_SESSION_WAIT_CONFIRM) {
         type = ZMK_2G4_SESSION_RESPONSE;
-    } else if (session->state == ZMK_2G4_SESSION_SEND_READY) {
+    } else if (session->state == ZMK_2G4_SESSION_SEND_READY ||
+               session->state == ZMK_2G4_SESSION_WAIT_READY_ACK) {
         type = ZMK_2G4_SESSION_READY;
     } else {
         return 0;
@@ -142,12 +162,13 @@ int zmk_2g4_session_prepare(const struct zmk_2g4_session *session, uint8_t *data
 }
 
 void zmk_2g4_session_sent(struct zmk_2g4_session *session, uint8_t type) {
-#if !IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
-    if (type == ZMK_2G4_SESSION_READY && session->state == ZMK_2G4_SESSION_SEND_READY) {
-        session->state = ZMK_2G4_SESSION_ESTABLISHED;
+#if IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
+    if (type == ZMK_2G4_SESSION_READY_ACK) {
+        session->ready_ack_pending = false;
     }
 #else
-    ARG_UNUSED(session);
-    ARG_UNUSED(type);
+    if (type == ZMK_2G4_SESSION_READY && session->state == ZMK_2G4_SESSION_SEND_READY) {
+        session->state = ZMK_2G4_SESSION_WAIT_READY_ACK;
+    }
 #endif
 }
