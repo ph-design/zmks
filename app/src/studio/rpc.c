@@ -159,6 +159,10 @@ void zmk_rpc_transport_fail(enum zmk_transport transport, uint32_t session) {
     }
 }
 
+bool zmk_rpc_transport_failed(uint32_t session) {
+    return session && session == (uint32_t)atomic_get(&failed_tx_session);
+}
+
 static uint32_t current_session(void) {
     k_spinlock_key_t key = k_spin_lock(&rpc_io_lock);
     uint32_t session = current_session_locked();

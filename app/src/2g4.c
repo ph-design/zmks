@@ -211,6 +211,10 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
     if (resync) {
         send_current_reports();
     }
+    if ((event->evt_id == ZMK_ESB_EVENT_TX_SUCCESS || event->evt_id == ZMK_ESB_EVENT_TX_FAILED) &&
+        zmk_esb_is_idle()) {
+        studio_radio_tx_available();
+    }
 }
 
 static int send_report(uint8_t report_type, const uint8_t *body, size_t len) {
