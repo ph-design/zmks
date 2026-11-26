@@ -291,8 +291,55 @@ void zmk_2g4_addr_get(struct zmk_2g4_addr *addr) {
 }
 
 #if IS_ENABLED(CONFIG_SETTINGS)
+struct pairing_record {
+    uint8_t paired;
+    uint8_t key[AES_KEY_SIZE];
+    struct zmk_2g4_addr addr;
+};
+
+static K_MUTEX_DEFINE(pairing_lock);
+static bool pairing_record_loaded;
+
+static void apply_pairing(const struct pairing_record *record) {
+    const uint8_t *key = record->paired ? record->key : factory_key;
+    bool reset_replay = !record->paired || !using_paired || memcmp(aes_key, key, AES_KEY_SIZE);
+    memcpy(aes_key, key, AES_KEY_SIZE);
+    paired_addr = record->addr;
+    using_paired = record->paired;
+    addr_paired = record->paired;
+    key_valid = record->paired || factory_valid;
+    pairing_record_loaded = true;
+    if (reset_replay) {
+        reset_rx_replay_state();
+    } else {
+        zmk_2g4_session_init(&link_session, tx_session_id);
+    }
+}
+
 static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    if (settings_name_steq(name, "pair", NULL)) {
+        struct pairing_record record;
+        if (len != sizeof(record)) {
+            return -EINVAL;
+        }
+        if (read_cb(cb_arg, &record, sizeof(record)) != sizeof(record)) {
+            return -EIO;
+        }
+        if (record.paired > 1 || (record.paired &&
+            (!pairing_key_valid(record.key) || record.addr.rf_channel > 100))) {
+            memset(&record, 0, sizeof(record));
+            return -EINVAL;
+        }
+        k_mutex_lock(&crypto_state_lock, K_FOREVER);
+        apply_pairing(&record);
+        k_mutex_unlock(&crypto_state_lock);
+        memset(&record, 0, sizeof(record));
+        return 0;
+    }
     if (settings_name_steq(name, "key", NULL)) {
+        if (pairing_record_loaded) {
+            return 0;
+        }
         if (len != AES_KEY_SIZE) {
             LOG_ERR("2.4G stored key has wrong length %u", (unsigned int)len);
             return -EINVAL;
@@ -312,6 +359,9 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
         return 0;
     }
     if (settings_name_steq(name, "addr", NULL)) {
+        if (pairing_record_loaded) {
+            return 0;
+        }
         if (len != ZMK_2G4_ADDR_LEN) {
             return -EINVAL;
         }
@@ -335,84 +385,42 @@ static int settings_set_2g4(const char *name, size_t len, settings_read_cb read_
 
 SETTINGS_STATIC_HANDLER_DEFINE(zmk_2g4, "2g4", NULL, settings_set_2g4, NULL, NULL);
 
-int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
-    if (!key || !pairing_key_valid(key)) {
+static int save_pairing(const struct pairing_record *record) {
+    k_mutex_lock(&pairing_lock, K_FOREVER);
+    int ret = settings_save_one("2g4/pair", record, sizeof(*record));
+    if (!ret) {
+        k_mutex_lock(&crypto_state_lock, K_FOREVER);
+        apply_pairing(record);
+        k_mutex_unlock(&crypto_state_lock);
+    }
+    k_mutex_unlock(&pairing_lock);
+    return ret;
+}
+
+int zmk_2g4_set_pairing(const uint8_t key[AES_KEY_SIZE], const struct zmk_2g4_addr *addr) {
+    if (!key || !addr || addr->rf_channel > 100 || !pairing_key_valid(key)) {
         return -EINVAL;
     }
-    int ret = settings_save_one("2g4/key", key, AES_KEY_SIZE);
-    if (ret) {
-        return ret;
-    }
-    k_mutex_lock(&crypto_state_lock, K_FOREVER);
-    bool changed = !using_paired || memcmp(aes_key, key, AES_KEY_SIZE);
-    memcpy(aes_key, key, AES_KEY_SIZE);
-    key_valid = true;
-    using_paired = true;
-    if (changed) {
-        reset_rx_replay_state();
-    } else {
-        zmk_2g4_session_init(&link_session, tx_session_id);
-    }
-    k_mutex_unlock(&crypto_state_lock);
-    return 0;
+    struct pairing_record record = {.paired = 1, .addr = *addr};
+    memcpy(record.key, key, sizeof(record.key));
+    int ret = save_pairing(&record);
+    memset(&record, 0, sizeof(record));
+    return ret;
 }
 
-int zmk_2g4_crypto_clear_paired_key(void) {
-    int ret = settings_delete("2g4/key");
-    if (ret) {
-        return ret;
-    }
-    k_mutex_lock(&crypto_state_lock, K_FOREVER);
-    using_paired = false;
-    if (factory_valid) {
-        memcpy(aes_key, factory_key, AES_KEY_SIZE);
-        key_valid = true;
-    } else {
-        key_valid = false;
-    }
-    reset_rx_replay_state();
-    k_mutex_unlock(&crypto_state_lock);
-    return 0;
-}
-
-int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
-    int ret = settings_save_one("2g4/addr", addr, ZMK_2G4_ADDR_LEN);
-    if (ret) {
-        return ret;
-    }
-    k_mutex_lock(&crypto_state_lock, K_FOREVER);
-    memcpy(&paired_addr, addr, sizeof(paired_addr));
-    addr_paired = true;
-    zmk_2g4_session_init(&link_session, tx_session_id);
-    k_mutex_unlock(&crypto_state_lock);
-    return 0;
-}
-
-int zmk_2g4_addr_clear_paired(void) {
-    int ret = settings_delete("2g4/addr");
-    if (ret) {
-        return ret;
-    }
-    k_mutex_lock(&crypto_state_lock, K_FOREVER);
-    addr_paired = false;
-    zmk_2g4_session_init(&link_session, tx_session_id);
-    k_mutex_unlock(&crypto_state_lock);
-    return 0;
+int zmk_2g4_clear_pairing(void) {
+    // A clear record also supersedes legacy key and address settings.
+    const struct pairing_record record = {0};
+    return save_pairing(&record);
 }
 #else
-int zmk_2g4_crypto_set_paired_key(const uint8_t key[AES_KEY_SIZE]) {
+int zmk_2g4_set_pairing(const uint8_t key[AES_KEY_SIZE], const struct zmk_2g4_addr *addr) {
     ARG_UNUSED(key);
-    return -ENOTSUP;
-}
-
-int zmk_2g4_crypto_clear_paired_key(void) { return -ENOTSUP; }
-
-int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr) {
     ARG_UNUSED(addr);
     return -ENOTSUP;
 }
 
-int zmk_2g4_addr_clear_paired(void) { return -ENOTSUP; }
+int zmk_2g4_clear_pairing(void) { return -ENOTSUP; }
 #endif
 
 static uint32_t reserved_session_id;

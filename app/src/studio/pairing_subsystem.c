@@ -95,22 +95,9 @@ static zmk_studio_Response generate_and_pair(const zmk_studio_Request *req) {
     }
     pairing_generate_addr(&addr);
 
-    err = zmk_2g4_crypto_set_paired_key(key);
-
-    if (err == 0) {
-        err = zmk_2g4_addr_set_paired(&addr);
-        if (err) {
-            // Roll back to the factory key if the address cannot be stored.
-            LOG_ERR("Storing 2.4G address failed (%d), rolling back to factory key", err);
-            int clear_err = zmk_2g4_crypto_clear_paired_key();
-            if (clear_err < 0 && clear_err != -ENOENT) {
-                LOG_ERR("Factory key rollback failed: %d", clear_err);
-            }
-            memset(key, 0, sizeof(key));
-            return ZMK_RPC_SIMPLE_ERR(GENERIC);
-        }
-    } else {
-        LOG_ERR("Storing 2.4G key failed: %d", err);
+    err = zmk_2g4_set_pairing(key, &addr);
+    if (err) {
+        LOG_ERR("Storing 2.4G pairing failed (%d)", err);
         memset(key, 0, sizeof(key));
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
@@ -137,12 +124,9 @@ static zmk_studio_Response generate_and_pair(const zmk_studio_Request *req) {
 static zmk_studio_Response clear_pairing(const zmk_studio_Request *req) {
     LOG_DBG("");
 
-    int key_err = zmk_2g4_crypto_clear_paired_key();
-    int addr_err = zmk_2g4_addr_clear_paired();
-
-    // nothing stored yet is a success, not a failure
-    if ((key_err < 0 && key_err != -ENOENT) || (addr_err < 0 && addr_err != -ENOENT)) {
-        LOG_ERR("Clearing 2.4G pairing failed (key %d, addr %d)", key_err, addr_err);
+    int err = zmk_2g4_clear_pairing();
+    if (err) {
+        LOG_ERR("Clearing 2.4G pairing failed (%d)", err);
         return ZMK_RPC_SIMPLE_ERR(GENERIC);
     }
 

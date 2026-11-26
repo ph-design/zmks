@@ -21,8 +21,6 @@ void zmk_2g4_crypto_session_sent(uint8_t type);
 int zmk_2g4_crypto_encrypt(uint8_t *data, size_t len, size_t buf_size);
 int zmk_2g4_crypto_decrypt(uint8_t *data, size_t len);
 
-int zmk_2g4_crypto_set_paired_key(const uint8_t key[16]);
-int zmk_2g4_crypto_clear_paired_key(void);
 bool zmk_2g4_crypto_uses_factory_key(void);
 bool zmk_2g4_crypto_has_paired_key(void);
 uint32_t zmk_2g4_crypto_key_id(void);
@@ -38,5 +36,5 @@ struct zmk_2g4_addr {
 void zmk_2g4_addr_get_default(struct zmk_2g4_addr *addr);
 bool zmk_2g4_addr_is_paired(void);
 void zmk_2g4_addr_get(struct zmk_2g4_addr *addr);
-int zmk_2g4_addr_set_paired(const struct zmk_2g4_addr *addr);
-int zmk_2g4_addr_clear_paired(void);
+int zmk_2g4_set_pairing(const uint8_t key[16], const struct zmk_2g4_addr *addr);
+int zmk_2g4_clear_pairing(void);
