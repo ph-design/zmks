@@ -410,6 +410,7 @@ config ZMK_RGB_UNDERGLOW_EXT_POWER
 
 config ZMK_RGB_UNDERGLOW_FADE
     bool "Enable RGB underglow fades by default"
+    default y
 
 config ZMK_RGB_UNDERGLOW_FADE_MS
     int "Default RGB underglow fade time (ms)"

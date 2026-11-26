@@ -858,8 +858,18 @@ static int rgb_settings_set(const char *name, size_t len, settings_read_cb read_
 
 SETTINGS_STATIC_HANDLER_DEFINE(rgb_underglow, "rgb/underglow", NULL, rgb_settings_set, NULL, NULL);
 
+static int save_underglow_state(void) {
+    unsigned int key = irq_lock();
+    struct rgb_underglow_state snapshot = state;
+    irq_unlock(key);
+    return settings_save_one("rgb/underglow/state", &snapshot, sizeof(snapshot));
+}
+
 static void zmk_rgb_underglow_save_state_work(struct k_work *_work) {
-    settings_save_one("rgb/underglow/state", &state, sizeof(state));
+    int err = save_underglow_state();
+    if (err < 0) {
+        LOG_ERR("Failed to save RGB underglow state: %d", err);
+    }
 }
 
 static struct k_work_delayable underglow_save_work;
@@ -970,6 +980,16 @@ int zmk_rgb_underglow_save_state(void) {
 #if IS_ENABLED(CONFIG_SETTINGS)
     int ret = k_work_reschedule(&underglow_save_work, K_MSEC(CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE));
     return MIN(ret, 0);
+#else
+    return 0;
+#endif
+}
+
+int zmk_rgb_underglow_save_state_now(void) {
+#if IS_ENABLED(CONFIG_SETTINGS)
+    struct k_work_sync sync;
+    k_work_cancel_delayable_sync(&underglow_save_work, &sync);
+    return save_underglow_state();
 #else
     return 0;
 #endif

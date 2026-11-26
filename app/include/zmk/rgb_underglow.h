@@ -54,3 +54,4 @@ int zmk_rgb_underglow_get_speed(void);
 int zmk_rgb_underglow_set_speed(int speed);
 int zmk_rgb_underglow_get_effect_count(void);
 int zmk_rgb_underglow_save_state(void);
+int zmk_rgb_underglow_save_state_now(void);

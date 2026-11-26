@@ -216,7 +216,7 @@ static zmk_studio_Response save_state(const zmk_studio_Request *req) {
     }
 #endif
     if (ret == 0) {
-        ret = zmk_rgb_underglow_save_state();
+        ret = zmk_rgb_underglow_save_state_now();
     }
     if (ret < 0) {
         LOG_ERR("Failed to save RGB underglow state: %d", ret);
