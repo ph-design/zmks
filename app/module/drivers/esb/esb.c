@@ -96,11 +96,11 @@ static struct pipe_info rx_pipe_info[CONFIG_ZMK_ESB_PIPE_COUNT];
 static uint32_t ack_timeout_us;
 static int8_t tx_power_dbm;
 static uint32_t watchdog_timeout_ms;
+static int64_t watchdog_deadline;
 
 K_MSGQ_DEFINE(evt_msgq, sizeof(struct zmk_esb_event), 4, 4);
 static struct k_work evt_work;
 static struct k_work_delayable watchdog_work;
-
 #if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
 static struct {
     atomic_t tx_ok;
@@ -164,6 +164,7 @@ static void start_tx_transaction(void);
 static void retransmit_current(void);
 static void watchdog_start(void);
 static void watchdog_cancel(void);
+static bool radio_clear(void);
 
 static uint32_t bytewise_bit_swap(const uint8_t *input) {
     uint32_t inp;
@@ -363,11 +364,7 @@ static void start_tx_transaction(void) {
 
     if (NRF_RADIO->STATE != RADIO_STATE_STATE_Disabled) {
         LOG_WRN("RADIO not disabled (state=%u) before TX, forcing", NRF_RADIO->STATE);
-        nrf_radio_shorts_set(NRF_RADIO, 0);
-        nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
-        nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-        if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100,
-                      k_busy_wait(1))) {
+        if (!radio_clear()) {
             DIAG_INC(start_timeout);
             LOG_WRN("RADIO disable timed out, retrying TX");
             esb_state = STATE_IDLE;
@@ -376,7 +373,6 @@ static void start_tx_transaction(void) {
             }
             return;
         }
-        nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
     }
 
     current_payload = &tx_fifo_buf[tx_front];
@@ -667,49 +663,67 @@ static void watchdog_handler(struct k_work *work) {
         irq_unlock(key);
         return;
     }
-    if (esb_state == STATE_UNINIT) {
+    if (esb_state != STATE_PTX_TX && esb_state != STATE_PTX_RX_ACK) {
         irq_unlock(key);
         return;
     }
-    irq_unlock(key);
+    // A completion IRQ can start the next packet before old watchdog work runs.
+    if (k_uptime_get() < watchdog_deadline) {
+        k_work_reschedule(&watchdog_work, K_TIMEOUT_ABS_MS(watchdog_deadline));
+        irq_unlock(key);
+        return;
+    }
+
     DIAG_INC(watchdog);
-    LOG_WRN("ESB watchdog: state %d stuck, RADIO=%u, resetting", esb_state, NRF_RADIO->STATE);
+    enum esb_state stalled_state = esb_state;
+    uint32_t radio_state = NRF_RADIO->STATE;
     on_radio_disabled = NULL;
     ppi_ack_timeout_disable();
 
-    nrf_radio_shorts_set(NRF_RADIO, 0);
-    nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
     nrf_timer_task_trigger(esb_timer_inst, NRF_TIMER_TASK_STOP);
     nrf_timer_int_disable(esb_timer_inst, 0xFFFFFFFF);
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
-    nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    if (!WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100,
-                  k_busy_wait(1))) {
-        LOG_ERR("Watchdog: RADIO disable timed out");
-    }
-    nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    bool disabled = radio_clear();
     NVIC_ClearPendingIRQ(RADIO_IRQn);
     NVIC_ClearPendingIRQ(esb_timer_irqn);
 
-    if (current_payload && esb_cfg.mode == ZMK_ESB_MODE_PTX) {
-        last_tx_attempts = esb_cfg.retransmit_count + 1;
-        signal_event(ZMK_ESB_EVENT_TX_FAILED);
-        tx_fifo_remove_first();
-    }
+    last_tx_attempts = esb_cfg.retransmit_count - retransmits_remaining + 1;
+    signal_event(ZMK_ESB_EVENT_TX_FAILED);
+    tx_fifo_remove_first();
     esb_state = STATE_IDLE;
+    if (esb_cfg.tx_mode == ZMK_ESB_TXMODE_AUTO && atomic_get(&tx_count)) {
+        if (disabled) {
+            start_tx_transaction();
+        } else {
+            k_work_reschedule(&watchdog_work, K_MSEC(1));
+        }
+    }
+    irq_unlock(key);
+
+    LOG_WRN("ESB watchdog: state %d stuck, RADIO=%u, resetting", stalled_state, radio_state);
+    if (!disabled) {
+        LOG_ERR("Watchdog: RADIO disable timed out");
+    }
 }
 
-static void watchdog_start(void) { k_work_reschedule(&watchdog_work, K_MSEC(watchdog_timeout_ms)); }
+static void watchdog_start(void) {
+    watchdog_deadline = k_uptime_get() + watchdog_timeout_ms;
+    k_work_reschedule(&watchdog_work, K_TIMEOUT_ABS_MS(watchdog_deadline));
+}
 
 static void watchdog_cancel(void) { k_work_cancel_delayable(&watchdog_work); }
 
-static void radio_clear(void) {
+static bool radio_clear(void) {
     nrf_radio_shorts_set(NRF_RADIO, 0);
     nrf_radio_int_disable(NRF_RADIO, 0xFFFFFFFF);
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    if (NRF_RADIO->STATE == RADIO_STATE_STATE_Disabled) {
+        return true;
+    }
     nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
-    (void)WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100, k_busy_wait(1));
+    bool disabled = WAIT_FOR(nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED), 100,
+                             k_busy_wait(1));
     nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
+    return disabled;
 }
 
 int zmk_esb_init(const struct zmk_esb_config *config) {
