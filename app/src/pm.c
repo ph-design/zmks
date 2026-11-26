@@ -151,29 +151,37 @@ int zmk_pm_soft_off(void) {
     }
 #endif // IS_ENABLED(CONFIG_PM_DEVICE)
 
-    int err = 0;
+    int err = zmk_pm_suspend_devices();
+    if (err < 0) {
+        goto resume_devices;
+    }
+
 #if HAS_WAKERS
+    // Wakeup sources can share GPIOs with the suspended devices.
+    const struct device *resumed_wakers[ARRAY_SIZE(soft_off_wakeup_sources)];
+    size_t resumed = 0;
+
     for (size_t i = 0; i < ARRAY_SIZE(soft_off_wakeup_sources); i++) {
         const struct device *dev = soft_off_wakeup_sources[i];
         err = pm_device_action_run(dev, PM_DEVICE_ACTION_RESUME);
-        if (err < 0 && err != -EALREADY && err != -ENOSYS && err != -ENOTSUP) {
-            goto restore_wakeup;
+        if (err == 0) {
+            resumed_wakers[resumed++] = dev;
+        } else if (err != -EALREADY && err != -ENOSYS && err != -ENOTSUP) {
+            while (resumed > 0) {
+                pm_device_action_run(resumed_wakers[--resumed], PM_DEVICE_ACTION_SUSPEND);
+            }
+            goto resume_devices;
         }
     }
 #endif // HAS_WAKERS
-
-    err = zmk_pm_suspend_devices();
-    if (err < 0) {
-        zmk_pm_resume_devices();
-        goto restore_wakeup;
-    }
 
     LOG_DBG("soft-off: go to sleep");
     zmk_wdt_feed_now();
     sys_poweroff();
     return 0;
 
-restore_wakeup:
+resume_devices:
+    zmk_pm_resume_devices();
 #if IS_ENABLED(CONFIG_PM_DEVICE)
     for (size_t i = 0; i < device_count; i++) {
         if (wakeup_enabled[i] != pm_device_wakeup_is_enabled(&devs[i])) {
