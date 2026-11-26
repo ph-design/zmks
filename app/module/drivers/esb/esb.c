@@ -101,14 +101,15 @@ static int64_t watchdog_deadline;
 K_MSGQ_DEFINE(evt_msgq, sizeof(struct zmk_esb_event), 4, 4);
 static struct k_work evt_work;
 static struct k_work_delayable watchdog_work;
+static atomic_t tx_ok, tx_failed;
+
 #if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
 static struct {
-    atomic_t tx_ok;
-    atomic_t tx_failed;
     atomic_t tx_full;
     atomic_t rx_queued;
     atomic_t rx_full;
     atomic_t event_full;
+    atomic_t retry_limit;
     atomic_t watchdog;
     atomic_t start_timeout;
 } diagnostics;
@@ -121,12 +122,12 @@ static void diagnostics_handler(struct k_work *work) {
     LOG_INF("ESB %s state=%u hw=%u txq=%ld rxq=%ld tx_ok=%ld tx_fail=%ld tx_full=%ld",
             esb_cfg.mode == ZMK_ESB_MODE_PTX ? "PTX" : "PRX", esb_state, NRF_RADIO->STATE,
             (long)atomic_get(&tx_count), (long)atomic_get(&rx_count),
-            (long)atomic_get(&diagnostics.tx_ok), (long)atomic_get(&diagnostics.tx_failed),
+            (long)atomic_get(&tx_ok), (long)atomic_get(&tx_failed),
             (long)atomic_get(&diagnostics.tx_full));
-    LOG_INF("ESB rx=%ld rx_full=%ld event_full=%ld watchdog=%ld start_timeout=%ld",
+    LOG_INF("ESB rx=%ld rx_full=%ld event_full=%ld retry_limit=%ld watchdog=%ld start_timeout=%ld",
             (long)atomic_get(&diagnostics.rx_queued), (long)atomic_get(&diagnostics.rx_full),
-            (long)atomic_get(&diagnostics.event_full), (long)atomic_get(&diagnostics.watchdog),
-            (long)atomic_get(&diagnostics.start_timeout));
+            (long)atomic_get(&diagnostics.event_full), (long)atomic_get(&diagnostics.retry_limit),
+            (long)atomic_get(&diagnostics.watchdog), (long)atomic_get(&diagnostics.start_timeout));
     k_work_schedule(k_work_delayable_from_work(work), K_SECONDS(1));
 }
 
@@ -235,18 +236,21 @@ static void evt_work_handler(struct k_work *work) {
     }
 }
 
+void zmk_esb_get_tx_stats(uint32_t *sent, uint32_t *failed) {
+    *failed = (uint32_t)atomic_get(&tx_failed);
+    *sent = (uint32_t)atomic_get(&tx_ok) + *failed;
+}
+
 static void signal_event(enum zmk_esb_event_id id) {
     struct zmk_esb_event evt = {
         .evt_id = id,
         .tx_attempts = last_tx_attempts,
     };
-#if IS_ENABLED(CONFIG_ZMK_USB_LOGGING)
     if (id == ZMK_ESB_EVENT_TX_SUCCESS) {
-        DIAG_INC(tx_ok);
+        atomic_inc(&tx_ok);
     } else if (id == ZMK_ESB_EVENT_TX_FAILED) {
-        DIAG_INC(tx_failed);
+        atomic_inc(&tx_failed);
     }
-#endif
     if (k_msgq_put(&evt_msgq, &evt, K_NO_WAIT)) {
         DIAG_INC(event_full);
     }
@@ -512,6 +516,7 @@ static void on_disabled_ptx_rx_ack(void) {
                 retransmit_current();
             }
         } else {
+            DIAG_INC(retry_limit);
             last_tx_attempts = esb_cfg.retransmit_count + 1;
             signal_event(ZMK_ESB_EVENT_TX_FAILED);
             tx_fifo_remove_first();

@@ -17,6 +17,7 @@ int zmk_2g4_send_mouse_report(void);
 #endif
 bool zmk_2g4_is_ready(void);
 int zmk_2g4_wait_for_tx(void);
+bool zmk_2g4_get_link_stats(uint32_t *sent, uint32_t *failed, int32_t *rssi);
 int zmk_2g4_send_background(const uint8_t *data, size_t len);
 int zmk_2g4_start(void);
 void zmk_2g4_motion_changed(void);

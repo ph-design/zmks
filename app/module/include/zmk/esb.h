@@ -83,3 +83,5 @@ int zmk_esb_set_base_address_1(const uint8_t *addr);
 int zmk_esb_set_prefixes(const uint8_t *prefixes, uint8_t num_pipes);
 int zmk_esb_set_rf_channel(uint32_t channel);
 int zmk_esb_set_tx_power(int8_t tx_power_dbm);
+
+void zmk_esb_get_tx_stats(uint32_t *sent, uint32_t *failed);

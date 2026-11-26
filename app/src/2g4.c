@@ -33,6 +33,19 @@ static K_WORK_DELAYABLE_DEFINE(session_work, session_work_handler);
 #define ZMK_2G4_KEEPALIVE_MS 250
 #define ZMK_2G4_AUTH_RETRY_MS 20
 static uint8_t consec_fail_count;
+static struct k_spinlock rssi_lock;
+static int32_t link_rssi;
+static int64_t rssi_at;
+
+bool zmk_2g4_get_link_stats(uint32_t *sent, uint32_t *failed, int32_t *rssi) {
+    zmk_esb_get_tx_stats(sent, failed);
+    int64_t now = k_uptime_get();
+    k_spinlock_key_t key = k_spin_lock(&rssi_lock);
+    *rssi = link_rssi;
+    bool recent = rssi_at && now - rssi_at < 3000;
+    k_spin_unlock(&rssi_lock, key);
+    return recent;
+}
 
 struct hid_report {
     uint8_t len;
@@ -181,6 +194,13 @@ static void esb_event_handler(const struct zmk_esb_event *event) {
             }
             k_mutex_unlock(&tx_lock);
 
+            if (len > 0 && rx.rssi) {
+                int64_t now = k_uptime_get();
+                k_spinlock_key_t key = k_spin_lock(&rssi_lock);
+                link_rssi = rx.rssi > 0 ? -rx.rssi : rx.rssi;
+                rssi_at = now;
+                k_spin_unlock(&rssi_lock, key);
+            }
             if (len == 0) {
                 k_work_reschedule(&session_work, K_NO_WAIT);
             }

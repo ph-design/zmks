@@ -9,6 +9,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
 
@@ -40,7 +41,14 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/rgb_underglow.h>
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zmk/ble.h>
+#endif
+
 #if IS_ENABLED(CONFIG_ZMK_2G4)
+#include <zmk/2g4.h>
 #include <zmk/2g4_crypto.h>
 #endif
 
@@ -291,6 +299,37 @@ static zmk_studio_Response get_runtime(const zmk_studio_Request *req) {
     return SYSINFO_RESPONSE(runtime, resp);
 }
 
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+static bool read_ble_rssi(int32_t *rssi) {
+    struct bt_conn *conn = zmk_ble_active_profile_conn();
+    if (!conn) {
+        return false;
+    }
+    uint16_t handle;
+    int err = bt_hci_get_conn_handle(conn, &handle);
+    bt_conn_unref(conn);
+    if (err) {
+        return false;
+    }
+
+    struct net_buf *cmd = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(struct bt_hci_cp_read_rssi));
+    if (!cmd) {
+        return false;
+    }
+    struct bt_hci_cp_read_rssi *param = net_buf_add(cmd, sizeof(*param));
+    param->handle = sys_cpu_to_le16(handle);
+
+    struct net_buf *response;
+    if (bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, cmd, &response)) {
+        return false;
+    }
+    const struct bt_hci_rp_read_rssi *result = (void *)response->data;
+    *rssi = result->rssi;
+    net_buf_unref(response);
+    return *rssi != 127;
+}
+#endif
+
 static zmk_studio_Response get_diagnostics(const zmk_studio_Request *req) {
     LOG_DBG("");
     zmk_sysinfo_Diagnostics resp = zmk_sysinfo_Diagnostics_init_zero;
@@ -310,8 +349,17 @@ static zmk_studio_Response get_diagnostics(const zmk_studio_Request *req) {
     // Optional diagnostics not exposed by this build.
     resp.heap_free = 0;
     resp.settings_save_pending = 0;
-    resp.two_g4_tx_total = 0;
-    resp.two_g4_tx_fail = 0;
+#if IS_ENABLED(CONFIG_ZMK_2G4) && !IS_ENABLED(CONFIG_ZMK_2G4_DONGLE)
+    if (zmk_rpc_request_is_transport(ZMK_TRANSPORT_2G4)) {
+        resp.has_rssi_dbm = zmk_2g4_get_link_stats(&resp.two_g4_tx_total, &resp.two_g4_tx_fail,
+                                                 &resp.rssi_dbm);
+    }
+#endif
+#if IS_ENABLED(CONFIG_ZMK_BLE)
+    if (zmk_rpc_request_is_transport(ZMK_TRANSPORT_BLE)) {
+        resp.has_rssi_dbm = read_ble_rssi(&resp.rssi_dbm);
+    }
+#endif
     resp.studio_rpc_dropped = 0;
 
     return SYSINFO_RESPONSE(diagnostics, resp);
