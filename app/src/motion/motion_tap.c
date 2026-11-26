@@ -16,6 +16,8 @@
 #define CLICK_SINGLE BIT(4)
 #define CLICK_NEGATIVE BIT(3)
 #define TAP_KEY_VETO_MS 12
+#define TAP_TEST_DURATION_MS 60000
+#define TAP_OPTIONS_SETTINGS_KEY "v2"
 #define TAP_DEFAULTS {.axes = 7, .quiet_ms = 120}
 
 static const struct device *const imu = DEVICE_DT_GET(DT_CHOSEN(zmk_imu));
@@ -40,7 +42,21 @@ struct tap_event {
 };
 
 static struct tap_event click_edge;
+static struct tap_event last_double;
+static bool have_double;
 K_MSGQ_DEFINE(tap_events, sizeof(struct tap_event), 8, 4);
+
+static void expire_tap_test(struct k_work *work) {
+    k_spinlock_key_t key = k_spin_lock(&tap_lock);
+    if (test_until && k_uptime_get() >= test_until) {
+        test_until = 0;
+        generation++;
+        k_msgq_purge(&tap_events);
+    }
+    k_spin_unlock(&tap_lock, key);
+}
+
+static K_WORK_DELAYABLE_DEFINE(tap_test_expiry, expire_tap_test);
 
 static uint32_t guard_generation(void) {
     return IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) ? zmk_motion_guard_generation() : 0;
@@ -54,10 +70,13 @@ static void dispatch_tap(struct tap_event event) {
     struct zmk_motion_tap_config cfg = config;
     struct zmk_tap_options opts = options;
     bool eligible = event.generation == generation && cfg.enabled;
+    bool duplicate = have_double && last_double.generation == event.generation &&
+                     last_double.guard_generation == event.guard_generation &&
+                     event.timestamp - last_double.timestamp < cfg.latency_ms;
     bool dry = event.test || k_uptime_get() < test_until;
     k_spin_unlock(&tap_lock, key);
 
-    if (!eligible || event.guard_generation != guard_generation() ||
+    if (!eligible || duplicate || event.guard_generation != guard_generation() ||
         (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) ||
         zmk_activity_input_recent(opts.quiet_ms) ||
         (cfg.layer_mask && !(zmk_keymap_layer_state() & cfg.layer_mask))) {
@@ -73,6 +92,8 @@ static void dispatch_tap(struct tap_event event) {
     const struct zmk_behavior_binding *binding = right ? &cfg.right_double : &cfg.left_double;
     bool invoke = !dry && binding->behavior_dev;
     key = k_spin_lock(&tap_lock);
+    last_double = event;
+    have_double = true;
     diagnostics.gestures++;
     pending_click = true;
     k_spin_unlock(&tap_lock, key);
@@ -173,10 +194,14 @@ static bool valid_options(const struct zmk_tap_options *opts) {
     return opts->axes >= 1 && opts->axes <= 7 && opts->quiet_ms <= 1000;
 }
 
+bool zmk_tap_config_valid(const struct zmk_motion_tap_config *cfg) {
+    return cfg->threshold <= 127 && cfg->time_limit_ms >= 1 && cfg->time_limit_ms <= 317 &&
+           cfg->latency_ms >= 1 && cfg->latency_ms <= 637 &&
+           cfg->window_ms >= 1 && cfg->window_ms <= 637;
+}
+
 int zmk_tap_configure(const struct zmk_motion_tap_config *cfg, const struct zmk_tap_options *opts) {
-    if (!valid_options(opts) || cfg->threshold > 127 || cfg->time_limit_ms < 1 ||
-        cfg->time_limit_ms > 317 || cfg->latency_ms < 1 || cfg->latency_ms > 637 ||
-        cfg->window_ms < 1 || cfg->window_ms > 637) {
+    if (!valid_options(opts) || !zmk_tap_config_valid(cfg)) {
         return -EINVAL;
     }
     if (!device_is_ready(imu)) {
@@ -206,6 +231,7 @@ int zmk_tap_configure(const struct zmk_motion_tap_config *cfg, const struct zmk_
     generation++;
     if (!config.enabled) {
         test_until = 0;
+        k_work_cancel_delayable(&tap_test_expiry);
     }
     diagnostics.error = err;
     diagnostics.odr = config.enabled ? 400 : 100;
@@ -225,14 +251,21 @@ int zmk_tap_set_test(bool on) {
         return -EACCES;
     }
     if (on) {
-        diagnostics.irq = diagnostics.single = diagnostics.dbl = 0;
+        diagnostics.irq = diagnostics.single = diagnostics.dbl = diagnostics.src = 0;
+        pending_click = false;
         diagnostics.gestures = diagnostics.actions = diagnostics.suppressed = diagnostics.drops = 0;
         memset(diagnostics.axes, 0, sizeof(diagnostics.axes));
         capture.count = sample_count = 0;
     }
     generation++;
     k_msgq_purge(&tap_events);
-    test_until = on ? k_uptime_get() + 60000 : 0;
+    if (on) {
+        test_until = k_uptime_get() + TAP_TEST_DURATION_MS;
+        k_work_reschedule(&tap_test_expiry, K_MSEC(TAP_TEST_DURATION_MS));
+    } else {
+        test_until = 0;
+        k_work_cancel_delayable(&tap_test_expiry);
+    }
     k_spin_unlock(&tap_lock, key);
     k_mutex_unlock(&tap_config_lock);
     return 0;
@@ -340,11 +373,11 @@ int zmk_tap_save(void) {
     struct zmk_tap_options opts;
     zmk_tap_get_options(&opts);
     const struct tap_record record = {1, opts.axes, opts.quiet_ms, opts.split};
-    return settings_save_one("tap/v1", &record, sizeof(record));
+    return settings_save_one("tap/" TAP_OPTIONS_SETTINGS_KEY, &record, sizeof(record));
 }
 
 int zmk_tap_reset(void) {
-    int err = settings_delete("tap/v1");
+    int err = settings_delete("tap/" TAP_OPTIONS_SETTINGS_KEY);
     if (err < 0 && err != -ENOENT) {
         return err;
     }
@@ -355,7 +388,7 @@ int zmk_tap_reset(void) {
 }
 
 static int tap_load(const char *name, size_t len, settings_read_cb read, void *arg) {
-    if (strcmp(name, "v1")) {
+    if (strcmp(name, TAP_OPTIONS_SETTINGS_KEY)) {
         return -ENOENT;
     }
     struct tap_record record;

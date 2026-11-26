@@ -23,7 +23,7 @@ ZMK_RPC_SUBSYSTEM(motion)
 #define MOTION_RESPONSE(type, ...) ZMK_RPC_RESPONSE(motion, type, __VA_ARGS__)
 #define MOTION_NOTIFICATION(type, ...) ZMK_RPC_NOTIFICATION(motion, type, __VA_ARGS__)
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION)
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 // unset binding is a negative behavior_id in the proto
 static void binding_to_proto(const struct zmk_behavior_binding *b,
                              zmk_keymap_BehaviorBinding *out) {
@@ -66,13 +66,9 @@ static void tap_to_proto(const struct zmk_motion_tap_config *cfg, zmk_motion_Tap
     out->latency_ms = cfg->latency_ms;
     out->window_ms = cfg->window_ms;
     out->layer_mask = cfg->layer_mask;
-    out->has_left_single_binding = cfg->left_single.behavior_dev != NULL;
     out->has_left_double_binding = cfg->left_double.behavior_dev != NULL;
-    out->has_right_single_binding = cfg->right_single.behavior_dev != NULL;
     out->has_right_double_binding = cfg->right_double.behavior_dev != NULL;
-    binding_to_proto(&cfg->left_single, &out->left_single_binding);
     binding_to_proto(&cfg->left_double, &out->left_double_binding);
-    binding_to_proto(&cfg->right_single, &out->right_single_binding);
     binding_to_proto(&cfg->right_double, &out->right_double_binding);
 }
 
@@ -85,9 +81,7 @@ static bool tap_from_proto(const zmk_motion_TapConfig *in, struct zmk_motion_tap
     out->layer_mask = in->layer_mask;
 
     bool ok = true;
-    ok &= binding_from_proto(&in->left_single_binding, &out->left_single);
     ok &= binding_from_proto(&in->left_double_binding, &out->left_double);
-    ok &= binding_from_proto(&in->right_single_binding, &out->right_single);
     ok &= binding_from_proto(&in->right_double_binding, &out->right_double);
     return ok;
 }
@@ -99,8 +93,6 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION)
     strncpy(resp.sensor, zmk_motion_sensor_name(), sizeof(resp.sensor) - 1);
     bool ready = zmk_motion_available();
-    resp.supports_tap = ready;
-    resp.supports_double_tap = ready;
     resp.supports_carry = ready;
     resp.supports_still_wake = ready && !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD);
     resp.supports_sleep_wake = ready && !IS_ENABLED(CONFIG_ZMK_MOTION_SAMPLER);
@@ -109,6 +101,8 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
     resp.guard_version = ready ? 1 : 0;
 #endif
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    resp.supports_tap = ready;
+    resp.supports_double_tap = ready;
     resp.tap_version = ready ? 2 : 0;
 #endif
 #endif
@@ -121,20 +115,18 @@ zmk_studio_Response get_capabilities(const zmk_studio_Request *req) {
     return MOTION_RESPONSE(capabilities, resp);
 }
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION)
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 zmk_studio_Response get_tap_config(const zmk_studio_Request *req) {
     struct zmk_motion_tap_config cfg;
     zmk_motion_TapConfig resp = zmk_motion_TapConfig_init_zero;
 
     zmk_motion_get_tap_config(&cfg);
     tap_to_proto(&cfg, &resp);
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     struct zmk_tap_options opts;
     zmk_tap_get_options(&opts);
     resp.axes_mask = opts.axes;
     resp.split_sides = opts.split;
     resp.typing_quiet_ms = opts.quiet_ms;
-#endif
 
     return MOTION_RESPONSE(tap_config, resp);
 }
@@ -148,16 +140,16 @@ zmk_studio_Response set_tap_config(const zmk_studio_Request *req) {
         return MOTION_RESPONSE(set_tap_config, false);
     }
 
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-    if (in->axes_mask || in->split_sides || in->typing_quiet_ms) {
-        const struct zmk_tap_options opts = {
-            .axes = in->axes_mask, .split = in->split_sides, .quiet_ms = in->typing_quiet_ms};
-        return MOTION_RESPONSE(set_tap_config, zmk_motion_set_hardware_tap(&cfg, &opts) == 0);
-    }
-#endif
-    return MOTION_RESPONSE(set_tap_config, zmk_motion_set_tap_config(&cfg) == 0);
+    const struct zmk_tap_options opts = {
+        .axes = in->axes_mask, .split = in->split_sides, .quiet_ms = in->typing_quiet_ms};
+    return MOTION_RESPONSE(set_tap_config, zmk_motion_set_tap_config(&cfg, &opts) == 0);
 }
 
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_tap_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_tap_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
+#endif
+
+#if IS_ENABLED(CONFIG_ZMK_MOTION)
 zmk_studio_Response get_carry_config(const zmk_studio_Request *req) {
     struct zmk_motion_carry_config cfg;
     zmk_motion_CarryConfig resp = zmk_motion_CarryConfig_init_zero;
@@ -260,8 +252,6 @@ zmk_studio_Response set_live_stream(const zmk_studio_Request *req) {
     return MOTION_RESPONSE(set_live_stream, true);
 }
 
-ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_tap_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
-ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_tap_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_carry_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, set_carry_config, ZMK_STUDIO_RPC_HANDLER_SECURED);
 ZMK_RPC_SUBSYSTEM_HANDLER(motion, get_still_wake_config, ZMK_STUDIO_RPC_HANDLER_SECURED);

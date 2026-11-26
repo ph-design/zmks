@@ -23,12 +23,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/activity_state_changed.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/events/motion_live_state_changed.h>
-#include <zmk/keymap.h>
 #include <zmk/motion.h>
 #include <zmk/motion_guard.h>
 #include <zmk/motion_sample.h>
 #include <zmk/motion_tap.h>
-#include <zmk/virtual_key_position.h>
 
 #if DT_HAS_CHOSEN(zmk_imu)
 
@@ -80,15 +78,10 @@ static int orientation_from_ums2(int64_t x, int64_t y, int64_t z) {
     return ORIENT_TILTED;
 }
 
-#if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-enum tap_side { TAP_LEFT, TAP_RIGHT, TAP_SIDE_COUNT };
-#endif
-
-// single source for boot defaults and settings reset
 #define TAP_CONFIG_DEFAULTS                                                                        \
     {.enabled = false,                                                                             \
      .threshold = 40,                                                                              \
-     .time_limit_ms = IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP) ? 30 : 120,                         \
+     .time_limit_ms = 30,                                                                           \
      .latency_ms = 80,                                                                             \
      .window_ms = 240,                                                                             \
      .layer_mask = 0}
@@ -96,7 +89,9 @@ enum tap_side { TAP_LEFT, TAP_RIGHT, TAP_SIDE_COUNT };
 #define STILL_WAKE_CONFIG_DEFAULTS {.enabled = true, .settle_duration_ms = SETTLE_DEFAULTS_MS}
 #define SLEEP_WAKE_CONFIG_DEFAULTS {.enabled = false, .threshold = 16, .duration_ms = 10000}
 
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
 static struct zmk_motion_tap_config tap_cfg = TAP_CONFIG_DEFAULTS;
+#endif
 static struct zmk_motion_carry_config carry_cfg = CARRY_CONFIG_DEFAULTS;
 static struct zmk_motion_still_wake_config still_wake_cfg = STILL_WAKE_CONFIG_DEFAULTS;
 static struct zmk_motion_sleep_wake_config sleep_wake_cfg = SLEEP_WAKE_CONFIG_DEFAULTS;
@@ -132,135 +127,12 @@ static void settle_check_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(settle_work, settle_check_work_cb);
 #endif
 
-#if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-// per-side single-tap state held back for one double-tap window
-struct pending_single {
-    struct k_work_delayable work;
-    struct zmk_behavior_binding binding;
-    atomic_t armed;
-};
-
-static void single_fire_work_cb(struct k_work *work);
-
-static struct pending_single pending_singles[TAP_SIDE_COUNT] = {
-    [TAP_LEFT] = {.work = Z_WORK_DELAYABLE_INITIALIZER(single_fire_work_cb)},
-    [TAP_RIGHT] = {.work = Z_WORK_DELAYABLE_INITIALIZER(single_fire_work_cb)},
-};
-#endif
-
 static void motion_live_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(live_work, motion_live_work_cb);
 
 #if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
 static void carry_check_work_cb(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(carry_work, carry_check_work_cb);
-#endif
-
-static bool binding_is_set(const struct zmk_behavior_binding *b) {
-    return b && b->behavior_dev != NULL;
-}
-
-#if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-static struct zmk_behavior_binding *tap_binding_for(enum tap_side side, bool dbl) {
-    if (side == TAP_LEFT) {
-        return dbl ? &tap_cfg.left_double : &tap_cfg.left_single;
-    }
-    return dbl ? &tap_cfg.right_double : &tap_cfg.right_single;
-}
-
-static bool tap_layer_active(void) {
-    return tap_cfg.layer_mask == 0 || (zmk_keymap_layer_state() & tap_cfg.layer_mask) != 0;
-}
-
-static void fire_binding(struct zmk_behavior_binding *b, enum tap_side side) {
-    if (IS_ENABLED(CONFIG_ZMK_MOTION_GUARD) && zmk_motion_guard_locked()) {
-        return;
-    }
-    if (!binding_is_set(b) || !tap_layer_active()) {
-        return;
-    }
-
-    struct zmk_behavior_binding_event event = {
-        .position = ZMK_VIRTUAL_KEY_POSITION_MOTION(side),
-        .timestamp = k_uptime_get(),
-#if IS_ENABLED(CONFIG_ZMK_SPLIT)
-        .source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
-#endif
-    };
-
-    live.tap_detected = true;
-    zmk_behavior_invoke_binding(b, event, true);
-    zmk_behavior_invoke_binding(b, event, false);
-}
-
-static enum tap_side click_side(uint8_t src) {
-    bool neg = (src & LIS2DH_CLICK_SRC_SIGN) != 0;
-#if IS_ENABLED(CONFIG_ZMK_MOTION_TAP_SIDE_INVERT)
-    neg = !neg;
-#endif
-    return neg ? TAP_LEFT : TAP_RIGHT;
-}
-
-static void read_click_src(void) {
-    struct sensor_value v;
-
-    if (sensor_channel_get(imu, SENSOR_CHAN_LIS2DH_CLICK_SRC, &v) == 0) {
-        live.last_click_src = (uint8_t)v.val1;
-    }
-}
-
-static void tap_trigger_handler(const struct device *dev, const struct sensor_trigger *trig) {
-    ARG_UNUSED(dev);
-    ARG_UNUSED(trig);
-
-    read_click_src();
-    // recognition feedback for the live stream, even when no binding fires
-    live.tap_detected = true;
-
-    enum tap_side side = click_side(live.last_click_src);
-    struct zmk_behavior_binding *single = tap_binding_for(side, false);
-
-    if (!binding_is_set(single)) {
-        return;
-    }
-
-    if (!binding_is_set(tap_binding_for(side, true))) {
-        fire_binding(single, side);
-        return;
-    }
-
-    // a double is armed on this side, hold the single back for one window
-    struct pending_single *p = &pending_singles[side];
-    p->binding = *single;
-    atomic_set(&p->armed, 1);
-    k_work_reschedule(&p->work, K_MSEC(tap_cfg.window_ms));
-}
-
-static void dtap_trigger_handler(const struct device *dev, const struct sensor_trigger *trig) {
-    ARG_UNUSED(dev);
-    ARG_UNUSED(trig);
-
-    read_click_src();
-    // recognition feedback for the live stream, even when no binding fires
-    live.tap_detected = true;
-
-    enum tap_side side = click_side(live.last_click_src);
-    struct pending_single *p = &pending_singles[side];
-
-    atomic_set(&p->armed, 0);
-    k_work_cancel_delayable(&p->work);
-
-    fire_binding(tap_binding_for(side, true), side);
-}
-
-static void single_fire_work_cb(struct k_work *work) {
-    struct pending_single *p =
-        CONTAINER_OF(k_work_delayable_from_work(work), struct pending_single, work);
-
-    if (atomic_cas(&p->armed, 1, 0)) {
-        fire_binding(&p->binding, (enum tap_side)(p - pending_singles));
-    }
-}
 #endif
 
 #if !IS_ENABLED(CONFIG_ZMK_MOTION_GUARD)
@@ -433,62 +305,13 @@ static void counts_to_ms2(uint32_t counts, struct sensor_value *v) {
 }
 #endif
 
-#if !IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-static int apply_tap_hw(void) {
-    struct sensor_value v;
-    int rc;
-
-    uint32_t ths_reg = tap_cfg.threshold / 2;
-    v.val1 = ths_reg < 1 ? 1 : ths_reg;
-    v.val2 = 0;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_THS, &v);
-    if (rc < 0) {
-        return rc;
-    }
-
-    v.val1 = tap_cfg.time_limit_ms;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_TIME_LIMIT_MS, &v);
-    if (rc < 0) {
-        return rc;
-    }
-
-    v.val1 = tap_cfg.latency_ms;
-    rc = sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_LATENCY_MS, &v);
-    if (rc < 0) {
-        return rc;
-    }
-
-    v.val1 = tap_cfg.window_ms;
-    return sensor_attr_set(imu, SENSOR_CHAN_ACCEL_XYZ, SENSOR_ATTR_LIS2DH_CLICK_WINDOW_MS, &v);
-}
-
-static void apply_tap_triggers(void) {
-    static const struct sensor_trigger tap_trig = {.type = SENSOR_TRIG_TAP,
-                                                   .chan = SENSOR_CHAN_ACCEL_XYZ};
-    static const struct sensor_trigger dtap_trig = {.type = SENSOR_TRIG_DOUBLE_TAP,
-                                                    .chan = SENSOR_CHAN_ACCEL_XYZ};
-
-    // Arm the engine whenever the feature is on, even with no binding set,
-    // so the tap test panel can show recognition while tuning. fire_binding
-    // skips unset slots, so no action fires until a slot is bound.
-    bool on = tap_cfg.enabled;
-
-    sensor_trigger_set(imu, &tap_trig, on ? tap_trigger_handler : NULL);
-    sensor_trigger_set(imu, &dtap_trig, on ? dtap_trigger_handler : NULL);
-}
-#endif
-
 static int apply_tap_settings(void) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     struct zmk_tap_options opts;
     zmk_tap_get_options(&opts);
     return zmk_tap_configure(&tap_cfg, &opts);
 #else
-    int err = apply_tap_hw();
-    if (!err) {
-        apply_tap_triggers();
-    }
-    return err;
+    return 0;
 #endif
 }
 
@@ -559,14 +382,11 @@ bool zmk_motion_available(void) { return device_is_ready(imu); }
 
 const char *zmk_motion_sensor_name(void) { return imu->name; }
 
-int zmk_motion_get_tap_config(struct zmk_motion_tap_config *out) {
-    *out = tap_cfg;
-    return 0;
-}
-
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-int zmk_motion_set_hardware_tap(const struct zmk_motion_tap_config *cfg,
-                                const struct zmk_tap_options *opts) {
+void zmk_motion_get_tap_config(struct zmk_motion_tap_config *out) { *out = tap_cfg; }
+
+int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg,
+                              const struct zmk_tap_options *opts) {
     int err = zmk_tap_configure(cfg, opts);
     if (!err) {
         tap_cfg = *cfg;
@@ -574,34 +394,6 @@ int zmk_motion_set_hardware_tap(const struct zmk_motion_tap_config *cfg,
     return err;
 }
 #endif
-
-int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg) {
-#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
-    struct zmk_tap_options opts;
-    zmk_tap_get_options(&opts);
-    return zmk_motion_set_hardware_tap(cfg, &opts);
-#else
-    if (cfg->threshold > 127) {
-        return -EINVAL;
-    }
-
-    struct zmk_motion_tap_config prev = tap_cfg;
-    tap_cfg = *cfg;
-    for (int i = 0; i < TAP_SIDE_COUNT; i++) {
-        atomic_set(&pending_singles[i].armed, 0);
-        k_work_cancel_delayable(&pending_singles[i].work);
-    }
-    int rc = apply_tap_hw();
-    if (rc < 0) {
-        LOG_WRN("tap config apply failed: %d", rc);
-        tap_cfg = prev;
-        apply_tap_hw();
-        return rc;
-    }
-    apply_tap_triggers();
-    return rc;
-#endif
-}
 
 int zmk_motion_get_carry_config(struct zmk_motion_carry_config *out) {
     *out = carry_cfg;
@@ -668,6 +460,9 @@ int zmk_motion_set_live_stream(bool on) {
 
 #define MOTION_SETTINGS_VERSION 1
 
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+#define MOTION_TAP_SETTINGS_KEY "double_tap"
+
 struct motion_tap_blob {
     uint8_t version;
     uint8_t enabled;
@@ -676,10 +471,11 @@ struct motion_tap_blob {
     uint32_t latency_ms;
     uint32_t window_ms;
     uint32_t layer_mask;
-    zmk_behavior_local_id_t local_ids[4];
-    uint32_t param1[4];
-    uint32_t param2[4];
+    zmk_behavior_local_id_t local_ids[2];
+    uint32_t param1[2];
+    uint32_t param2[2];
 } __packed;
+#endif
 
 struct motion_carry_blob {
     uint8_t version;
@@ -704,8 +500,6 @@ struct motion_sleep_wake_blob {
     uint32_t duration_ms;
 } __packed;
 
-static void tap_defaults(void) { tap_cfg = (struct zmk_motion_tap_config)TAP_CONFIG_DEFAULTS; }
-
 static void carry_defaults(void) {
     carry_cfg = (struct zmk_motion_carry_config)CARRY_CONFIG_DEFAULTS;
 }
@@ -717,6 +511,9 @@ static void still_wake_defaults(void) {
 static void sleep_wake_defaults(void) {
     sleep_wake_cfg = (struct zmk_motion_sleep_wake_config)SLEEP_WAKE_CONFIG_DEFAULTS;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+static bool binding_is_set(const struct zmk_behavior_binding *binding) { return binding->behavior_dev != NULL; }
 
 static void binding_to_store(const struct zmk_behavior_binding *b, int idx,
                              struct motion_tap_blob *blob) {
@@ -742,7 +539,11 @@ static bool binding_from_store(struct zmk_behavior_binding *b, int idx,
     return true;
 }
 
+#endif
+
 int zmk_motion_save_state(void) {
+    int rc;
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     struct motion_tap_blob tb = {.version = MOTION_SETTINGS_VERSION,
                                  .enabled = tap_cfg.enabled ? 1 : 0,
                                  .threshold = (uint16_t)tap_cfg.threshold,
@@ -750,15 +551,14 @@ int zmk_motion_save_state(void) {
                                  .latency_ms = tap_cfg.latency_ms,
                                  .window_ms = tap_cfg.window_ms,
                                  .layer_mask = tap_cfg.layer_mask};
-    binding_to_store(&tap_cfg.left_single, 0, &tb);
-    binding_to_store(&tap_cfg.left_double, 1, &tb);
-    binding_to_store(&tap_cfg.right_single, 2, &tb);
-    binding_to_store(&tap_cfg.right_double, 3, &tb);
+    binding_to_store(&tap_cfg.left_double, 0, &tb);
+    binding_to_store(&tap_cfg.right_double, 1, &tb);
 
-    int rc = settings_save_one("motion/tap", &tb, sizeof(tb));
+    rc = settings_save_one("motion/" MOTION_TAP_SETTINGS_KEY, &tb, sizeof(tb));
     if (rc < 0) {
         return rc;
     }
+#endif
 
     struct motion_carry_blob cb = {.version = MOTION_SETTINGS_VERSION,
                                    .enabled = carry_cfg.enabled ? 1 : 0,
@@ -786,7 +586,9 @@ int zmk_motion_save_state(void) {
 
 int zmk_motion_settings_reset(void) {
     static const char *const keys[] = {
-        "motion/tap",
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+        "motion/" MOTION_TAP_SETTINGS_KEY,
+#endif
         "motion/carry",
         "motion/still",
         "motion/slpwk",
@@ -800,7 +602,9 @@ int zmk_motion_settings_reset(void) {
         }
     }
 
-    tap_defaults();
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    tap_cfg = (struct zmk_motion_tap_config)TAP_CONFIG_DEFAULTS;
+#endif
     carry_defaults();
     still_wake_defaults();
     sleep_wake_defaults();
@@ -810,25 +614,30 @@ int zmk_motion_settings_reset(void) {
 
 static int motion_settings_load(const char *name, size_t len, settings_read_cb read_cb,
                                 void *cb_arg) {
-    if (strcmp(name, "tap") == 0) {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    if (strcmp(name, MOTION_TAP_SETTINGS_KEY) == 0) {
         struct motion_tap_blob tb;
         if (len != sizeof(tb) || read_cb(cb_arg, &tb, sizeof(tb)) != sizeof(tb) ||
-            tb.version != MOTION_SETTINGS_VERSION) {
+            tb.version != MOTION_SETTINGS_VERSION || tb.enabled > 1) {
             return -EINVAL;
         }
-        tap_cfg.enabled = tb.enabled != 0;
-        tap_cfg.threshold = tb.threshold;
-        tap_cfg.time_limit_ms = tb.time_limit_ms;
-        tap_cfg.latency_ms = tb.latency_ms;
-        tap_cfg.window_ms = tb.window_ms;
-        tap_cfg.layer_mask = tb.layer_mask;
-        // no short-circuit: all four bindings must be populated even if one is unknown
-        bool ok = binding_from_store(&tap_cfg.left_single, 0, &tb) &
-                  binding_from_store(&tap_cfg.left_double, 1, &tb) &
-                  binding_from_store(&tap_cfg.right_single, 2, &tb) &
-                  binding_from_store(&tap_cfg.right_double, 3, &tb);
-        return ok ? 0 : -EINVAL;
+        struct zmk_motion_tap_config loaded = {
+            .enabled = tb.enabled,
+            .threshold = tb.threshold,
+            .time_limit_ms = tb.time_limit_ms,
+            .latency_ms = tb.latency_ms,
+            .window_ms = tb.window_ms,
+            .layer_mask = tb.layer_mask,
+        };
+        if (!zmk_tap_config_valid(&loaded) ||
+            !binding_from_store(&loaded.left_double, 0, &tb) ||
+            !binding_from_store(&loaded.right_double, 1, &tb)) {
+            return -EINVAL;
+        }
+        tap_cfg = loaded;
+        return 0;
     }
+#endif
 
     if (strcmp(name, "carry") == 0) {
         struct motion_carry_blob cb;
@@ -874,11 +683,6 @@ static int motion_settings_commit(void) {
         return 0; // zmk_motion_init applies once the device comes up
     }
 
-    if (IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)) {
-        tap_cfg.time_limit_ms = CLAMP(tap_cfg.time_limit_ms, 1, 317);
-        tap_cfg.latency_ms = CLAMP(tap_cfg.latency_ms, 1, 637);
-        tap_cfg.window_ms = CLAMP(tap_cfg.window_ms, 1, 637);
-    }
     int tap_err = apply_motion_settings();
     arm_boot_settle_check();
     return tap_err;
@@ -915,8 +719,6 @@ bool zmk_motion_available(void) { return false; }
 
 const char *zmk_motion_sensor_name(void) { return ""; }
 
-int zmk_motion_get_tap_config(struct zmk_motion_tap_config *out) { return -ENOTSUP; }
-int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg) { return -ENOTSUP; }
 int zmk_motion_get_carry_config(struct zmk_motion_carry_config *out) { return -ENOTSUP; }
 int zmk_motion_set_carry_config(const struct zmk_motion_carry_config *cfg) { return -ENOTSUP; }
 int zmk_motion_get_still_wake_config(struct zmk_motion_still_wake_config *out) { return -ENOTSUP; }

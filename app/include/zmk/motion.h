@@ -16,9 +16,7 @@ struct zmk_motion_tap_config {
     uint32_t time_limit_ms;
     uint32_t latency_ms;
     uint32_t window_ms;
-    struct zmk_behavior_binding left_single;
     struct zmk_behavior_binding left_double;
-    struct zmk_behavior_binding right_single;
     struct zmk_behavior_binding right_double;
     uint32_t layer_mask;
 };
@@ -53,8 +51,6 @@ int zmk_motion_set_sleep_wake_config(const struct zmk_motion_sleep_wake_config *
 bool zmk_motion_available(void);
 const char *zmk_motion_sensor_name(void);
 
-int zmk_motion_get_tap_config(struct zmk_motion_tap_config *out);
-int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *cfg);
 int zmk_motion_get_carry_config(struct zmk_motion_carry_config *out);
 int zmk_motion_set_carry_config(const struct zmk_motion_carry_config *cfg);
 int zmk_motion_get_still_wake_config(struct zmk_motion_still_wake_config *out);

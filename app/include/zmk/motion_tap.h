@@ -31,8 +31,10 @@ struct zmk_tap_capture {
 void zmk_tap_get_options(struct zmk_tap_options *out);
 int zmk_tap_configure(const struct zmk_motion_tap_config *config,
                       const struct zmk_tap_options *options);
-int zmk_motion_set_hardware_tap(const struct zmk_motion_tap_config *config,
-                                const struct zmk_tap_options *options);
+bool zmk_tap_config_valid(const struct zmk_motion_tap_config *config);
+void zmk_motion_get_tap_config(struct zmk_motion_tap_config *out);
+int zmk_motion_set_tap_config(const struct zmk_motion_tap_config *config,
+                              const struct zmk_tap_options *options);
 int zmk_tap_save(void);
 int zmk_tap_reset(void);
 void zmk_tap_get_diagnostics(struct zmk_tap_diagnostics *out);
