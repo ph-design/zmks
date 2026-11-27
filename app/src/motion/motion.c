@@ -475,6 +475,9 @@ struct motion_tap_blob {
     uint32_t param1[2];
     uint32_t param2[2];
 } __packed;
+
+/* A nonzero version marks a record staged for this settings commit. */
+static struct motion_tap_blob pending_tap;
 #endif
 
 struct motion_carry_blob {
@@ -537,6 +540,29 @@ static bool binding_from_store(struct zmk_behavior_binding *b, int idx,
         .param2 = blob->param2[idx],
     };
     return true;
+}
+
+static void restore_pending_tap(void) {
+    if (!pending_tap.version) {
+        return;
+    }
+
+    struct zmk_motion_tap_config loaded = {
+        .enabled = pending_tap.enabled,
+        .threshold = pending_tap.threshold,
+        .time_limit_ms = pending_tap.time_limit_ms,
+        .latency_ms = pending_tap.latency_ms,
+        .window_ms = pending_tap.window_ms,
+        .layer_mask = pending_tap.layer_mask,
+    };
+    if (zmk_tap_config_valid(&loaded) &&
+        binding_from_store(&loaded.left_double, 0, &pending_tap) &&
+        binding_from_store(&loaded.right_double, 1, &pending_tap)) {
+        tap_cfg = loaded;
+    } else {
+        LOG_WRN("Ignoring invalid saved double-tap configuration");
+    }
+    pending_tap.version = 0;
 }
 
 #endif
@@ -603,6 +629,7 @@ int zmk_motion_settings_reset(void) {
     }
 
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    pending_tap.version = 0;
     tap_cfg = (struct zmk_motion_tap_config)TAP_CONFIG_DEFAULTS;
 #endif
     carry_defaults();
@@ -616,25 +643,12 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
                                 void *cb_arg) {
 #if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
     if (strcmp(name, MOTION_TAP_SETTINGS_KEY) == 0) {
-        struct motion_tap_blob tb;
-        if (len != sizeof(tb) || read_cb(cb_arg, &tb, sizeof(tb)) != sizeof(tb) ||
-            tb.version != MOTION_SETTINGS_VERSION || tb.enabled > 1) {
+        if (len != sizeof(pending_tap) ||
+            read_cb(cb_arg, &pending_tap, sizeof(pending_tap)) != sizeof(pending_tap) ||
+            pending_tap.version != MOTION_SETTINGS_VERSION || pending_tap.enabled > 1) {
+            pending_tap.version = 0;
             return -EINVAL;
         }
-        struct zmk_motion_tap_config loaded = {
-            .enabled = tb.enabled,
-            .threshold = tb.threshold,
-            .time_limit_ms = tb.time_limit_ms,
-            .latency_ms = tb.latency_ms,
-            .window_ms = tb.window_ms,
-            .layer_mask = tb.layer_mask,
-        };
-        if (!zmk_tap_config_valid(&loaded) ||
-            !binding_from_store(&loaded.left_double, 0, &tb) ||
-            !binding_from_store(&loaded.right_double, 1, &tb)) {
-            return -EINVAL;
-        }
-        tap_cfg = loaded;
         return 0;
     }
 #endif
@@ -679,6 +693,9 @@ static int motion_settings_load(const char *name, size_t len, settings_read_cb r
 
 // runs after settings_load() from main(); re-apply the loaded config
 static int motion_settings_commit(void) {
+#if IS_ENABLED(CONFIG_ZMK_MOTION_HARDWARE_TAP)
+    restore_pending_tap();
+#endif
     if (!device_is_ready(imu)) {
         return 0; // zmk_motion_init applies once the device comes up
     }
@@ -688,8 +705,10 @@ static int motion_settings_commit(void) {
     return tap_err;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(zmk_motion, "motion", NULL, motion_settings_load,
-                               motion_settings_commit, NULL);
+/* NVS may deliver motion/double_tap before the saved behavior IDs. Resolve its
+ * bindings after the behavior table's default-priority (0) commit. */
+SETTINGS_STATIC_HANDLER_DEFINE_WITH_CPRIO(zmk_motion, "motion", NULL, motion_settings_load,
+                                          motion_settings_commit, NULL, 1);
 
 static int zmk_motion_init(void) {
     if (!device_is_ready(imu)) {
