@@ -10,7 +10,11 @@
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include <pb_encode.h>
+#if IS_ENABLED(CONFIG_RETENTION_BOOT_MODE)
+#include <zephyr/retention/bootmode.h>
+#else
 #include <dt-bindings/zmk/reset.h>
+#endif
 #if IS_ENABLED(CONFIG_ZMK_USB)
 #include <zmk/usb.h>
 #endif
@@ -22,8 +26,13 @@ ZMK_RPC_SUBSYSTEM(core)
 #define CORE_RESPONSE(type, ...) ZMK_RPC_RESPONSE(core, type, __VA_ARGS__)
 
 static bool bootloader_supported(void) {
-    return IS_ENABLED(CONFIG_NRF_STORE_REBOOT_TYPE_GPREGRET) &&
-           IS_ENABLED(CONFIG_BUILD_OUTPUT_UF2) && IS_ENABLED(CONFIG_ZMK_USB) &&
+#if IS_ENABLED(CONFIG_RETENTION_BOOT_MODE)
+    const bool nrf52_uf2 =
+        IS_ENABLED(CONFIG_ZMK_BOOTMODE_MAGIC_VALUE_BOOTLOADER_TYPE_ADAFRUIT_NRF52);
+#else
+    const bool nrf52_uf2 = IS_ENABLED(CONFIG_NRF_STORE_REBOOT_TYPE_GPREGRET);
+#endif
+    return nrf52_uf2 && IS_ENABLED(CONFIG_BUILD_OUTPUT_UF2) && IS_ENABLED(CONFIG_ZMK_USB) &&
            IS_ENABLED(CONFIG_ZMK_STUDIO_TRANSPORT_UART);
 }
 
@@ -47,7 +56,16 @@ static void bootloader_work_cb(struct k_work *work) {
 #if IS_ENABLED(CONFIG_ZMK_USB)
     if (bootloader_usb_ready() &&
         bootloader_usb_connection == zmk_usb_get_connection_id()) {
+#if IS_ENABLED(CONFIG_RETENTION_BOOT_MODE)
+        int ret = bootmode_set(BOOT_MODE_TYPE_BOOTLOADER);
+        if (ret < 0) {
+            LOG_ERR("Failed to set the bootloader mode (%d)", ret);
+            return;
+        }
+        sys_reboot(SYS_REBOOT_WARM);
+#else
         sys_reboot(RST_UF2);
+#endif
     }
 #endif
 }
