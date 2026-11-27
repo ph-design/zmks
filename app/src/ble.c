@@ -60,7 +60,11 @@ enum advertising_type {
 
 static struct zmk_ble_profile profiles[ZMK_BLE_PROFILE_COUNT];
 static uint8_t active_profile;
-static bool ble_started;
+static enum {
+    BLE_HOST_OFF,
+    BLE_HOST_ENABLED,
+    BLE_HOST_READY,
+} ble_host_state;
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -105,7 +109,9 @@ bool zmk_ble_profile_is_open(uint8_t index) {
     return !bt_addr_le_cmp(&profiles[index].peer, BT_ADDR_LE_ANY);
 }
 
-bool zmk_ble_is_advertising(void) { return ble_started && advertising_status != ZMK_ADV_NONE; }
+bool zmk_ble_is_advertising(void) {
+    return ble_host_state == BLE_HOST_READY && advertising_status != ZMK_ADV_NONE;
+}
 
 static void set_profile_address(uint8_t index, const bt_addr_le_t *addr) {
     char setting_name[17];
@@ -184,7 +190,7 @@ int update_advertising(void) {
     struct bt_conn *conn;
     enum advertising_type desired_adv = ZMK_ADV_NONE;
 
-    if (!ble_started) {
+    if (ble_host_state != BLE_HOST_READY) {
         return 0;
     }
 
@@ -705,48 +711,60 @@ static void zmk_ble_ready(int err) {
         return;
     }
 
-    ble_started = true;
+    ble_host_state = BLE_HOST_READY;
     update_advertising();
 }
 
 int zmk_ble_stop(void) {
-    if (!ble_started) {
+    if (ble_host_state == BLE_HOST_OFF) {
         return 0;
     }
 
-    k_work_cancel(&update_advertising_work);
-
-    bt_le_adv_stop();
-    advertising_status = ZMK_ADV_NONE;
+    if (ble_host_state == BLE_HOST_READY) {
+        k_work_cancel(&update_advertising_work);
+        bt_le_adv_stop();
+        advertising_status = ZMK_ADV_NONE;
+    }
 
 #if IS_ENABLED(CONFIG_ZMK_2G4)
     // Propagate failure so ESB never starts with the BLE controller active.
     int ret = bt_disable();
     if (ret) {
         LOG_ERR("bt_disable failed: %d", ret);
-        // Keep BLE marked started so a later attempt can retry.
-        advertising_status = ZMK_ADV_NONE;
         update_advertising();
         return ret;
     }
 #endif
 
-    ble_started = false;
+    ble_host_state = BLE_HOST_OFF;
 
     LOG_INF("BLE stopped");
     return 0;
 }
 
 int zmk_ble_start(void) {
-    if (ble_started) {
+    if (ble_host_state == BLE_HOST_READY) {
         return 0;
     }
 
-    int err = bt_enable(NULL);
-    if (err && err != -EALREADY) {
-        LOG_ERR("bt_enable failed: %d", err);
+    if (ble_host_state == BLE_HOST_OFF) {
+        int err = bt_enable(NULL);
+        if (err && err != -EALREADY) {
+            LOG_ERR("bt_enable failed: %d", err);
+            return err;
+        }
+        ble_host_state = BLE_HOST_ENABLED;
+    }
+
+#if IS_ENABLED(CONFIG_BT_SETTINGS)
+    // bt_disable() clears the host's identities and keys. Restore only the
+    // Bluetooth subtree; reloading all settings would repeat ZMK startup.
+    int err = settings_load_subtree("bt");
+    if (err) {
+        LOG_ERR("Failed to restore Bluetooth settings: %d", err);
         return err;
     }
+#endif
 
     zmk_ble_ready(0);
     LOG_INF("BLE started");
@@ -798,6 +816,7 @@ static int zmk_ble_init(void) {
         LOG_ERR("BLUETOOTH FAILED (%d)", err);
         return err;
     }
+    ble_host_state = BLE_HOST_ENABLED;
 
 #if IS_ENABLED(CONFIG_SETTINGS)
     settings_register(&profiles_handler);
@@ -823,7 +842,7 @@ static bool zmk_ble_numeric_usage_to_value(const zmk_key_t key, const zmk_key_t 
 
 static int zmk_ble_handle_key_user(struct zmk_keycode_state_changed *event) {
     /* BLE is not the active transport; do not attempt passkey handling. */
-    if (!ble_started) {
+    if (ble_host_state != BLE_HOST_READY) {
         return ZMK_EV_EVENT_BUBBLE;
     }
 
