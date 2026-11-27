@@ -22,12 +22,6 @@
 #define ZMK_LAYER_CHILD_LEN_PLUS_ONE(node) 1 +
 #define ZMK_KEYMAP_LAYERS_LEN (ZMK_KEYMAP_LAYERS_FOREACH(ZMK_LAYER_CHILD_LEN_PLUS_ONE) 0)
 
-#define ZMK_KEYMAP_LAYERS_FOREACH_SEP(fn, sep)                                                     \
-    COND_CODE_1(                                                                                   \
-        IS_ENABLED(CONFIG_ZMK_STUDIO),                                                             \
-        (DT_FOREACH_CHILD_SEP(DT_INST(0, zmk_keymap), fn, sep)),                                   \
-        (DT_FOREACH_CHILD_STATUS_OKAY_SEP(DT_INST(0, zmk_keymap), fn, sep)))
-
 /**
  * @brief A layer ID is a stable identifier to refer to a layer, regardless of ordering.
  */

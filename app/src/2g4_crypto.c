@@ -139,10 +139,10 @@ static int ccm_run(bool encrypt) {
         return -EIO;
     }
 
-    nrf_ccm_event_clear(NRF_CCM, NRF_CCM_EVENT_ENDCRYPT);
+    nrf_ccm_event_clear(NRF_CCM, NRF_CCM_EVENT_END);
     nrf_ccm_event_clear(NRF_CCM, NRF_CCM_EVENT_ERROR);
-    nrf_ccm_task_trigger(NRF_CCM, NRF_CCM_TASK_CRYPT);
-    if (!WAIT_FOR(nrf_ccm_event_check(NRF_CCM, NRF_CCM_EVENT_ENDCRYPT) ||
+    nrf_ccm_task_trigger(NRF_CCM, NRF_CCM_TASK_START);
+    if (!WAIT_FOR(nrf_ccm_event_check(NRF_CCM, NRF_CCM_EVENT_END) ||
                       nrf_ccm_event_check(NRF_CCM, NRF_CCM_EVENT_ERROR),
                   1000, k_busy_wait(1))) {
         return -ETIMEDOUT;
