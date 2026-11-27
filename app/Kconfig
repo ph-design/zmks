@@ -10,6 +10,13 @@ menu "Basic Keyboard Setup"
 config ZMK_KEYBOARD_NAME
     string "Keyboard Name"
 
+config ZMK_DEVICE_BOARD_ID
+    string "Board identifier reported to Studio"
+    default BOARD
+    help
+      Set this when a board target is renamed but existing Studio clients
+      should continue to recognize the same product.
+
 config ZMK_DEVICE_MODEL
     string "Device Model"
     default ZMK_KEYBOARD_NAME

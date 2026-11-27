@@ -182,7 +182,7 @@ static zmk_studio_Response get_firmware(const zmk_studio_Request *req) {
     // APP_BUILD_VERSION is an unquoted token and must be stringified.
     copy_str(resp.git_hash, sizeof(resp.git_hash), STRINGIFY(APP_BUILD_VERSION));
 
-    copy_str(resp.board, sizeof(resp.board), CONFIG_BOARD);
+    copy_str(resp.board, sizeof(resp.board), CONFIG_ZMK_DEVICE_BOARD_ID);
     copy_str(resp.studio_protocol, sizeof(resp.studio_protocol), "0.3");
 
     resp.image_size_kb = ((uintptr_t)_flash_used + 1023U) / 1024U;
