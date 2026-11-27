@@ -9,7 +9,7 @@ manifest:
   projects:
     - name: zephyr
       remote: zmkfirmware
-      revision: v3.5.0+zmk-fixes
+      revision: 10ba6d0cb38bc3d258775d27982f707599320085
       clone-depth: 1
       import:
         name-blocklist:
@@ -20,7 +20,6 @@ manifest:
           - hal_microchip
           - hal_nxp
           - hal_openisa
-          - hal_silabs
           - hal_xtensa
           - hal_st
           - hal_ti
@@ -31,13 +30,14 @@ manifest:
           - openthread
           - edtt
           - trusted-firmware-m
-    - name: nanopb
-      revision: 8c60555d6277a0360c876bd85d491fc4fb0cd74a
-      path: modules/lib/nanopb
+    - name: lvgl
+      revision: f1db87ee98f1810328a8419572fa42a3b5f352ae
+      path: modules/lib/gui/lvgl
       remote: zmkfirmware
     - name: zmk-studio-messages
-      revision: v0.3_lts
+      revision: 313af0dc8111ae53291efb4b31fc4ad32ef555f5
       path: modules/msgs/zmk-studio-messages
       remote: ph-design
+  group-filter: [+optional]
   self:
     west-commands: scripts/west-commands.yml

@@ -13,13 +13,18 @@ Definition file: [zmk/app/Kconfig](https://github.com/zmkfirmware/zmk/blob/main/
 
 ### General
 
-| Config                               | Type   | Description                                                                   | Default |
-| ------------------------------------ | ------ | ----------------------------------------------------------------------------- | ------- |
-| `CONFIG_ZMK_KEYBOARD_NAME`           | string | The name of the keyboard (max 16 characters)                                  |         |
-| `CONFIG_ZMK_SETTINGS_RESET_ON_START` | bool   | Clears all persistent settings from the keyboard at startup                   | n       |
-| `CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE`  | int    | Milliseconds to wait after a setting change before writing it to flash memory | 60000   |
-| `CONFIG_ZMK_WPM`                     | bool   | Enable calculating words per minute                                           | n       |
-| `CONFIG_HEAP_MEM_POOL_SIZE`          | int    | Size of the heap memory pool                                                  | 8192    |
+| Config                      | Type   | Description                                  | Default |
+| --------------------------- | ------ | -------------------------------------------- | ------- |
+| `CONFIG_ZMK_KEYBOARD_NAME`  | string | The name of the keyboard (max 16 characters) |         |
+| `CONFIG_ZMK_WPM`            | bool   | Enable calculating words per minute          | n       |
+| `CONFIG_HEAP_MEM_POOL_SIZE` | int    | Size of the heap memory pool                 | 8192    |
+
+:::info
+
+Because ZMK enables [the Zephyr setting](https://docs.zephyrproject.org/4.1.0/kconfig.html#CONFIG_BT_DEVICE_NAME_DYNAMIC) that allows for runtime modification of the device BT name,
+changing `CONFIG_ZMK_KEYBOARD_NAME` requires [clearing the stored settings](./settings.md#clearing-persisted-settings) on the controller in order to take effect.
+
+:::
 
 ### HID
 
@@ -88,7 +93,7 @@ By default USB Boot protocol support is disabled, however certain situations suc
 
 ### Bluetooth
 
-See [Zephyr's Bluetooth stack architecture documentation](https://docs.zephyrproject.org/3.5.0/connectivity/bluetooth/bluetooth-arch.html)
+See [Zephyr's Bluetooth stack architecture documentation](https://docs.zephyrproject.org/4.1.0/connectivity/bluetooth/bluetooth-arch.html)
 for more information on configuring Bluetooth.
 
 | Config                                      | Type | Description                                                           | Default |
@@ -115,6 +120,13 @@ Note that `CONFIG_BT_MAX_CONN` and `CONFIG_BT_MAX_PAIRED` should be set to the s
 | `CONFIG_ZMK_USB_LOGGING` | bool | Enable USB CDC ACM logging for debugging | n       |
 | `CONFIG_ZMK_LOG_LEVEL`   | int  | Log level for ZMK debug messages         | 4       |
 
+### Double Tap To Bootloader
+
+| Config                                     | Type | Description                                                         | Default                     |
+| ------------------------------------------ | ---- | ------------------------------------------------------------------- | --------------------------- |
+| `CONFIG_ZMK_DBL_TAP_BOOTLOADER`            | bool | Enable the double-tap to enter bootloader functionality             | y if STM32 or RP2040/RP2350 |
+| `CONFIG_ZMK_DBL_TAP_BOOTLOADER_TIMEOUT_MS` | int  | Duration (in ms) to wait for a second reset to enter the bootloader | 500                         |
+
 ## Snippets
 
 :::danger
@@ -127,7 +139,7 @@ The only way to restore functionality after that is to re-flash the bootloader.
 Re-flashing a bootloader built without the SoftDevice will require firmware built with these snippets.
 :::
 
-[Snippets](https://docs.zephyrproject.org/3.5.0/build/snippets/index.html) are a way to save common configuration separately when it applies to multiple different applications.
+[Snippets](https://docs.zephyrproject.org/4.1.0/build/snippets/index.html) are a way to save common configuration separately when it applies to multiple different applications.
 
 Enable snippets by adding `snippet: <snippet>` to your `build.yaml` for the appropriate board:
 

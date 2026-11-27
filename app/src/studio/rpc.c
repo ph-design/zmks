@@ -497,7 +497,7 @@ static void rpc_main(void) {
         pb_istream_t stream = {&rpc_read_cb, &context, SIZE_MAX};
         zmk_studio_Request req = zmk_studio_Request_init_zero;
 #if IS_ENABLED(CONFIG_THREAD_ANALYZER)
-        thread_analyzer_print();
+        thread_analyzer_print(0);
 #endif // IS_ENABLED(CONFIG_THREAD_ANALYZER)
         bool status = pb_decode(&stream, &zmk_studio_Request_msg, &req);
 
@@ -513,7 +513,7 @@ static void rpc_main(void) {
 
             int err = send_request_response(&resp, context.session);
 #if IS_ENABLED(CONFIG_THREAD_ANALYZER)
-            thread_analyzer_print();
+            thread_analyzer_print(0);
 #endif // IS_ENABLED(CONFIG_THREAD_ANALYZER)
             if (err < 0) {
                 LOG_ERR("Failed to send the RPC response %d", err);
